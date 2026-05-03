@@ -331,7 +331,9 @@ func (t *grepTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 		if openErr != nil {
 			return nil
 		}
-		defer f.Close()
+		defer func() {
+			_ = f.Close()
+		}()
 
 		scanner := bufio.NewScanner(f)
 		lineNum := 0
@@ -410,7 +412,9 @@ func (t *readTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 	if err != nil {
 		return "", fmt.Errorf("open file: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	scanner := bufio.NewScanner(f)
 	var lines []string

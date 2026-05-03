@@ -64,7 +64,9 @@ func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports 
 		b.logger.ErrorContext(ctx, "Failed to create temp dir", slog.Any("error", err))
 		return fmt.Errorf("create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		_ = os.RemoveAll(tempDir)
+	}()
 
 	contextFS, err := fsutil.NewFS(options.Context)
 	if err != nil {

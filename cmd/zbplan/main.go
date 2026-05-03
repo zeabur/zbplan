@@ -18,9 +18,11 @@ import (
 	"github.com/zeabur/zbplan/internal/plantools"
 )
 
-var buildkitAddr = flag.String("buildkit-addr", "", "the address of the buildkit server")
-var contextDir = flag.String("context-dir", "", "the directory to use as the build context")
-var variables = MapFlag{}
+var (
+	buildkitAddr = flag.String("buildkit-addr", "", "the address of the buildkit server")
+	contextDir   = flag.String("context-dir", "", "the directory to use as the build context")
+	variables    = MapFlag{}
+)
 
 func init() {
 	flag.Var(&variables, "variables", "the variables to pass to the build context")
@@ -98,7 +100,9 @@ func main() {
 		slog.Error("failed to create builder client", "error", err)
 		os.Exit(1)
 	}
-	defer builderClient.Close()
+	defer func() {
+		_ = builderClient.Close()
+	}()
 
 	cfg := &claude.Config{
 		APIKey:    os.Getenv("ANTHROPIC_API_KEY"),

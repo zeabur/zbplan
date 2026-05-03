@@ -47,7 +47,9 @@ func (f *finder) searchDockerHub(ctx context.Context, keyword string, limit int)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("hub search returned %s", resp.Status)
@@ -88,7 +90,9 @@ func (f *finder) searchGHCR(ctx context.Context, keyword string, limit int) ([]I
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("github search returned %s", resp.Status)
@@ -153,7 +157,9 @@ func (f *finder) hasGHCRPackage(ctx context.Context, fullName string) bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return false
 	}
