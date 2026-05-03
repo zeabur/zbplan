@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"regexp"
+	"strings"
 
 	"github.com/zeabur/zbplan/internal/plantools"
 
@@ -61,20 +63,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	result, err := goai.GenerateObject[GeneratedDockerfile](ctx, model,
-		goai.WithPrompt(`You are an expert DevOps engineer. Your task is to generate a production-ready Dockerfile for the codebase in the current directory.
+	result, err := goai.GenerateText(ctx, model,
+		goai.WithSystem(`You are an expert DevOps engineer. Your task is to generate a production-ready Dockerfile for the codebase in the current directory.
 
 Follow these steps in order:
 
-1. **Explore the codebase**: Use the list, glob, grep, and read tools to understand the project structure, language/runtime, dependencies, entry points, and any existing build configuration (e.g. package.json, go.mod, requirements.txt, Makefile, etc.).
+1. **Explore the codebase**: Use the list, glob, grep, and read tools to understand the project structure, language/runtime, dependencies, entry points, and any existing build configuration (e.g. package.json, go.mod, requirements.txt, Makefile, etc.). Use as few tool calls as possible — stop once you know the code structure (what to copy), required versions, and startup parameters.
 
 2. **Select a base image**: Use the list_images tool to find candidate base images, then use list_tags to find a suitable, up-to-date tag that matches the detected runtime and version requirements.
 
-3. **Draft a Dockerfile**: Write a Dockerfile that correctly builds and runs the application. Follow best practices: use multi-stage builds where appropriate, minimize final image size, avoid running as root, and copy only necessary files.
+3. **Draft a Dockerfile**: Write a Dockerfile that correctly builds and runs the application. Follow best practices: use multi-stage builds where appropriate, minimize final image size, avoid running as root, and copy only necessary files. Prefer fast Dockerfile iteration over exhaustive code exploration.
 
 4. **Verify the build**: Call build_and_check_dockerfile with the drafted Dockerfile. If the build fails, read the error output, fix the Dockerfile, and retry until the build succeeds.
 
-Return the final working Dockerfile.`),
+IMPORTANT: Your final response MUST contain only the raw Dockerfile content — no explanations, no markdown prose, no comments outside the Dockerfile itself. Output the Dockerfile and nothing else.`),
+		goai.WithPrompt("Dockerfile:"),
 		goai.WithTools(
 			builderTool,
 			plantools.NewListImagesTool(),
@@ -84,10 +87,19 @@ Return the final working Dockerfile.`),
 			plantools.NewReadTool(contextDirFS),
 			plantools.NewListTool(contextDirFS),
 		),
-		goai.WithMaxSteps(50),
+		goai.WithProviderOptions(map[string]any{
+			"thinking": map[string]any{
+				"type": "adaptive",
+			},
+		}),
+		goai.WithToolChoice("auto"),
+		goai.WithMaxSteps(25),
 		goai.WithOnStepFinish(func(step goai.StepResult) {
 			fmt.Printf("--- Step %d (finish: %s, tools: %d) ---\n",
 				step.Number, step.FinishReason, len(step.ToolCalls))
+		}),
+		goai.WithOnToolCallStart(func(tcsi goai.ToolCallStartInfo) {
+			fmt.Printf("  Tool (start): %s: %s\n", tcsi.ToolName, tcsi.Input)
 		}),
 		goai.WithOnToolCall(func(info goai.ToolCallInfo) {
 			fmt.Printf("  Tool: %s: %s -> %s...\n", info.ToolName, info.Input, info.Output[:min(50, len(info.Output))])
@@ -98,7 +110,16 @@ Return the final working Dockerfile.`),
 		os.Exit(1)
 	}
 
-	fmt.Println(result.Object.Dockerfile)
-	fmt.Printf("# Tokens: %d in, %d out\n",
-		result.Usage.InputTokens, result.Usage.OutputTokens)
+	fmt.Println(extractDockerfile(result.Text))
+	fmt.Printf("# Tokens: %d in, %d out, %d for reasoning.\n",
+		result.TotalUsage.InputTokens, result.TotalUsage.OutputTokens, result.TotalUsage.ReasoningTokens)
+}
+
+var dockerfenceRe = regexp.MustCompile("(?i)```(?:dockerfile)?\n((?s:.*?))```")
+
+func extractDockerfile(text string) string {
+	if m := dockerfenceRe.FindStringSubmatch(text); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	return strings.TrimSpace(text)
 }
