@@ -64,6 +64,14 @@ func buildShouldIgnore(baseDir string) func(string, bool) bool {
 	}
 }
 
+func relFromBase(baseDir, absPath string) string {
+	rel, err := filepath.Rel(baseDir, absPath)
+	if err != nil {
+		return filepath.ToSlash(strings.TrimPrefix(absPath, baseDir+string(filepath.Separator)))
+	}
+	return filepath.ToSlash(rel)
+}
+
 // --- glob tool ---
 
 type globTool struct{ baseDir string }
@@ -116,7 +124,11 @@ func (t *globTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 
 	var filtered []string
 	for _, m := range allMatches {
-		rel := filepath.ToSlash(strings.TrimPrefix(m, prefix))
+		rel := relFromBase(t.baseDir, m)
+		if strings.HasPrefix(rel, "../") || rel == ".." || filepath.IsAbs(rel) {
+			rel = filepath.ToSlash(strings.TrimPrefix(m, prefix))
+			rel = strings.TrimPrefix(rel, "/")
+		}
 		info, statErr := os.Stat(m)
 		if statErr != nil {
 			continue
@@ -314,6 +326,12 @@ func (t *readTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 	}
 	if err := scanner.Err(); err != nil {
 		return "", fmt.Errorf("scan file: %w", err)
+	}
+	if len(lines) == 0 {
+		if args.Offset > 0 {
+			return "no lines in requested range", nil
+		}
+		return "empty file", nil
 	}
 	return strings.Join(lines, "\n"), nil
 }

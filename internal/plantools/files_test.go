@@ -23,6 +23,36 @@ func TestReadToolReturnsDirectoryNotice(t *testing.T) {
 	}
 }
 
+func TestReadToolReturnsEmptyFileNotice(t *testing.T) {
+	baseDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(baseDir, "README.md"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewReadTool(baseDir).InvokableRun(context.Background(), `{"path":"README.md"}`)
+	if err != nil {
+		t.Fatalf("read empty file returned error: %v", err)
+	}
+	if result != "empty file" {
+		t.Fatalf("expected empty file notice, got %q", result)
+	}
+}
+
+func TestReadToolReturnsOutOfRangeNotice(t *testing.T) {
+	baseDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(baseDir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewReadTool(baseDir).InvokableRun(context.Background(), `{"path":"README.md","offset":10}`)
+	if err != nil {
+		t.Fatalf("read out-of-range offset returned error: %v", err)
+	}
+	if result != "no lines in requested range" {
+		t.Fatalf("expected out-of-range notice, got %q", result)
+	}
+}
+
 func TestGlobToolMarksDirectoriesWithTrailingSlash(t *testing.T) {
 	baseDir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(baseDir, "src"), 0o755); err != nil {
@@ -43,6 +73,21 @@ func TestGlobToolMarksDirectoriesWithTrailingSlash(t *testing.T) {
 	}
 	if !containsLine(lines, "README.md") {
 		t.Fatalf("expected README.md in glob result, got %q", result)
+	}
+}
+
+func TestRecursiveGlobRootMatchHasNoLeadingSlash(t *testing.T) {
+	baseDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(baseDir, "pyproject.toml"), []byte("[project]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewGlobTool(baseDir).InvokableRun(context.Background(), `{"pattern":"**/pyproject.toml"}`)
+	if err != nil {
+		t.Fatalf("glob returned error: %v", err)
+	}
+	if result != "pyproject.toml" {
+		t.Fatalf("expected relative root match, got %q", result)
 	}
 }
 
