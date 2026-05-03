@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/cloudwego/eino/components/tool"
@@ -29,6 +31,8 @@ var defaultIgnoredDirs = []string{
 	".nuxt",
 	".cache",
 }
+
+var errPathEscapesBase = errors.New("path escapes base directory")
 
 func buildShouldIgnore(baseDir string) func(string, bool) bool {
 	patterns := make([]string, len(defaultIgnoredDirs))
@@ -72,6 +76,76 @@ func relFromBase(baseDir, absPath string) string {
 	return filepath.ToSlash(rel)
 }
 
+func cleanToolPath(path string) (string, error) {
+	nativePath := filepath.FromSlash(path)
+	if filepath.IsAbs(nativePath) {
+		return "", errPathEscapesBase
+	}
+	if slices.Contains(strings.Split(nativePath, string(filepath.Separator)), "..") {
+		return "", errPathEscapesBase
+	}
+	return filepath.Clean(nativePath), nil
+}
+
+func isPathInBase(baseDir, absPath string) bool {
+	rel, err := filepath.Rel(baseDir, absPath)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (!filepath.IsAbs(rel) && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+func secureToolPath(baseDir, path string) (string, string, error) {
+	rel, err := cleanToolPath(path)
+	if err != nil {
+		return "", "", err
+	}
+	absBase, err := filepath.Abs(baseDir)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve base directory: %w", err)
+	}
+	absPath := filepath.Join(absBase, rel)
+	if !isPathInBase(absBase, absPath) {
+		return "", "", errPathEscapesBase
+	}
+	return rel, absPath, nil
+}
+
+func secureExistingToolPath(baseDir, path string) (string, string, error) {
+	rel, absPath, err := secureToolPath(baseDir, path)
+	if err != nil {
+		return "", "", err
+	}
+	absBase, err := filepath.Abs(baseDir)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve base directory: %w", err)
+	}
+	realBase, err := filepath.EvalSymlinks(absBase)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve base directory: %w", err)
+	}
+	realPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve path: %w", err)
+	}
+	if !isPathInBase(realBase, realPath) {
+		return "", "", errPathEscapesBase
+	}
+	return rel, realPath, nil
+}
+
+func secureGlobMatch(absBase, realBase, match string) (string, bool) {
+	absMatch, err := filepath.Abs(match)
+	if err != nil || !isPathInBase(absBase, absMatch) {
+		return "", false
+	}
+	realMatch, err := filepath.EvalSymlinks(absMatch)
+	if err != nil || !isPathInBase(realBase, realMatch) {
+		return "", false
+	}
+	return absMatch, true
+}
+
 // --- glob tool ---
 
 type globTool struct{ baseDir string }
@@ -107,12 +181,22 @@ func (t *globTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 		args.Limit = 100
 	}
 
-	absPattern := filepath.Join(t.baseDir, filepath.FromSlash(args.Pattern))
-	shouldIgnore := buildShouldIgnore(t.baseDir)
-	prefix := t.baseDir + string(filepath.Separator)
+	_, absPattern, err := secureToolPath(t.baseDir, args.Pattern)
+	if err != nil {
+		return "", err
+	}
+	absBase, err := filepath.Abs(t.baseDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve base directory: %w", err)
+	}
+	realBase, err := filepath.EvalSymlinks(absBase)
+	if err != nil {
+		return "", fmt.Errorf("resolve base directory: %w", err)
+	}
+	shouldIgnore := buildShouldIgnore(absBase)
+	prefix := absBase + string(filepath.Separator)
 
 	var allMatches []string
-	var err error
 	if strings.Contains(args.Pattern, "**") {
 		allMatches, err = filepathx.Glob(absPattern)
 	} else {
@@ -124,12 +208,16 @@ func (t *globTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 
 	var filtered []string
 	for _, m := range allMatches {
-		rel := relFromBase(t.baseDir, m)
+		absMatch, ok := secureGlobMatch(absBase, realBase, m)
+		if !ok {
+			continue
+		}
+		rel := relFromBase(absBase, absMatch)
 		if strings.HasPrefix(rel, "../") || rel == ".." || filepath.IsAbs(rel) {
-			rel = filepath.ToSlash(strings.TrimPrefix(m, prefix))
+			rel = filepath.ToSlash(strings.TrimPrefix(absMatch, prefix))
 			rel = strings.TrimPrefix(rel, "/")
 		}
-		info, statErr := os.Stat(m)
+		info, statErr := os.Stat(absMatch)
 		if statErr != nil {
 			continue
 		}
@@ -193,15 +281,22 @@ func (t *grepTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 		return "", fmt.Errorf("compile pattern: %w", err)
 	}
 
-	shouldIgnore := buildShouldIgnore(t.baseDir)
+	absBase, err := filepath.Abs(t.baseDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve base directory: %w", err)
+	}
+	realBase, err := filepath.EvalSymlinks(absBase)
+	if err != nil {
+		return "", fmt.Errorf("resolve base directory: %w", err)
+	}
+	shouldIgnore := buildShouldIgnore(absBase)
 	var results []string
 
-	err = filepath.Walk(t.baseDir, func(absPath string, info os.FileInfo, err error) error {
+	err = filepath.Walk(absBase, func(absPath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
-		rel, _ := filepath.Rel(t.baseDir, absPath)
-		rel = filepath.ToSlash(rel)
+		rel := relFromBase(absBase, absPath)
 
 		if shouldIgnore(rel, info.IsDir()) {
 			if info.IsDir() {
@@ -228,7 +323,11 @@ func (t *grepTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 			}
 		}
 
-		f, openErr := os.Open(absPath)
+		realPath, realErr := filepath.EvalSymlinks(absPath)
+		if realErr != nil || !isPathInBase(realBase, realPath) {
+			return nil
+		}
+		f, openErr := os.Open(realPath)
 		if openErr != nil {
 			return nil
 		}
@@ -295,7 +394,10 @@ func (t *readTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 		args.Limit = 200
 	}
 
-	absPath := filepath.Join(t.baseDir, filepath.FromSlash(args.Path))
+	_, absPath, err := secureExistingToolPath(t.baseDir, args.Path)
+	if err != nil {
+		return "", err
+	}
 	info, err := os.Stat(absPath)
 	if err != nil {
 		return "", fmt.Errorf("stat path: %w", err)
@@ -366,7 +468,10 @@ func (t *listTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 		return "", fmt.Errorf("path is required")
 	}
 
-	absPath := filepath.Join(t.baseDir, filepath.FromSlash(args.Path))
+	relPath, absPath, err := secureExistingToolPath(t.baseDir, args.Path)
+	if err != nil {
+		return "", err
+	}
 	info, err := os.Stat(absPath)
 	if err != nil {
 		return "", fmt.Errorf("stat path: %w", err)
@@ -386,7 +491,7 @@ func (t *listTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 	shouldIgnore := buildShouldIgnore(t.baseDir)
 	var names []string
 	for _, entry := range entries {
-		entryRel := filepath.ToSlash(filepath.Join(filepath.FromSlash(args.Path), entry.Name()))
+		entryRel := filepath.ToSlash(filepath.Join(relPath, entry.Name()))
 		if shouldIgnore(entryRel, entry.IsDir()) {
 			continue
 		}
@@ -438,22 +543,28 @@ func (t *treeTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 		args.Depth = 3
 	}
 
-	rootAbs := filepath.Join(t.baseDir, filepath.FromSlash(args.Path))
-	shouldIgnore := buildShouldIgnore(t.baseDir)
+	_, rootAbs, err := secureExistingToolPath(t.baseDir, args.Path)
+	if err != nil {
+		return "", err
+	}
+	absBase, err := filepath.Abs(t.baseDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve base directory: %w", err)
+	}
+	shouldIgnore := buildShouldIgnore(absBase)
 
 	const maxEntries = 500
 	var lines []string
 	truncated := false
 
-	err := filepath.Walk(rootAbs, func(absPath string, info os.FileInfo, err error) error {
+	err = filepath.Walk(rootAbs, func(absPath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
 
-		relFromBase, _ := filepath.Rel(t.baseDir, absPath)
-		relFromBase = filepath.ToSlash(relFromBase)
+		relFromBasePath := relFromBase(absBase, absPath)
 
-		if shouldIgnore(relFromBase, info.IsDir()) {
+		if shouldIgnore(relFromBasePath, info.IsDir()) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}

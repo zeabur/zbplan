@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -53,6 +54,27 @@ func TestReadToolReturnsOutOfRangeNotice(t *testing.T) {
 	}
 }
 
+func TestReadToolRejectsParentTraversal(t *testing.T) {
+	baseDir := testBaseWithOutsideFile(t)
+
+	_, err := NewReadTool(baseDir).InvokableRun(context.Background(), `{"path":"../outside.txt"}`)
+	if err == nil || !strings.Contains(err.Error(), "path escapes base directory") {
+		t.Fatalf("expected path escape error, got %v", err)
+	}
+}
+
+func TestReadToolRejectsSymlinkEscape(t *testing.T) {
+	baseDir, outsideFile := testBaseAndOutsideFile(t)
+	if err := os.Symlink(outsideFile, filepath.Join(baseDir, "link.txt")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	_, err := NewReadTool(baseDir).InvokableRun(context.Background(), `{"path":"link.txt"}`)
+	if err == nil || !strings.Contains(err.Error(), "path escapes base directory") {
+		t.Fatalf("expected path escape error, got %v", err)
+	}
+}
+
 func TestGlobToolMarksDirectoriesWithTrailingSlash(t *testing.T) {
 	baseDir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(baseDir, "src"), 0o755); err != nil {
@@ -76,6 +98,36 @@ func TestGlobToolMarksDirectoriesWithTrailingSlash(t *testing.T) {
 	}
 }
 
+func TestGlobToolRejectsParentTraversal(t *testing.T) {
+	baseDir := testBaseWithOutsideFile(t)
+
+	_, err := NewGlobTool(baseDir).InvokableRun(context.Background(), `{"pattern":"../*.txt"}`)
+	if err == nil || !strings.Contains(err.Error(), "path escapes base directory") {
+		t.Fatalf("expected path escape error, got %v", err)
+	}
+}
+
+func TestGlobToolSkipsSymlinkEscape(t *testing.T) {
+	baseDir, outsideFile := testBaseAndOutsideFile(t)
+	if err := os.WriteFile(filepath.Join(baseDir, "inside.txt"), []byte("inside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(baseDir, "link.txt")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	result, err := NewGlobTool(baseDir).InvokableRun(context.Background(), `{"pattern":"*"}`)
+	if err != nil {
+		t.Fatalf("glob returned error: %v", err)
+	}
+	if containsLine(strings.Split(result, "\n"), "link.txt") {
+		t.Fatalf("expected symlink escape to be skipped, got %q", result)
+	}
+	if !containsLine(strings.Split(result, "\n"), "inside.txt") {
+		t.Fatalf("expected inside file in glob result, got %q", result)
+	}
+}
+
 func TestRecursiveGlobRootMatchHasNoLeadingSlash(t *testing.T) {
 	baseDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(baseDir, "pyproject.toml"), []byte("[project]\n"), 0o644); err != nil {
@@ -88,6 +140,24 @@ func TestRecursiveGlobRootMatchHasNoLeadingSlash(t *testing.T) {
 	}
 	if result != "pyproject.toml" {
 		t.Fatalf("expected relative root match, got %q", result)
+	}
+}
+
+func TestGrepToolSkipsSymlinkEscape(t *testing.T) {
+	baseDir, outsideFile := testBaseAndOutsideFile(t)
+	if err := os.WriteFile(filepath.Join(baseDir, "inside.txt"), []byte("inside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(baseDir, "link.txt")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	result, err := NewGrepTool(baseDir).InvokableRun(context.Background(), `{"pattern":"secret"}`)
+	if err != nil {
+		t.Fatalf("grep returned error: %v", err)
+	}
+	if result != "no matches found" {
+		t.Fatalf("expected symlink escape to be skipped, got %q", result)
 	}
 }
 
@@ -120,11 +190,44 @@ func TestListAndTreeToolsMarkDirectoriesWithTrailingSlash(t *testing.T) {
 	}
 }
 
-func containsLine(lines []string, want string) bool {
-	for _, line := range lines {
-		if line == want {
-			return true
-		}
+func TestListToolRejectsParentTraversal(t *testing.T) {
+	baseDir := testBaseWithOutsideFile(t)
+
+	_, err := NewListTool(baseDir).InvokableRun(context.Background(), `{"path":".."}`)
+	if err == nil || !strings.Contains(err.Error(), "path escapes base directory") {
+		t.Fatalf("expected path escape error, got %v", err)
 	}
-	return false
+}
+
+func TestTreeToolRejectsParentTraversal(t *testing.T) {
+	baseDir := testBaseWithOutsideFile(t)
+
+	_, err := NewTreeTool(baseDir).InvokableRun(context.Background(), `{"path":".."}`)
+	if err == nil || !strings.Contains(err.Error(), "path escapes base directory") {
+		t.Fatalf("expected path escape error, got %v", err)
+	}
+}
+
+func testBaseWithOutsideFile(t *testing.T) string {
+	t.Helper()
+	baseDir, _ := testBaseAndOutsideFile(t)
+	return baseDir
+}
+
+func testBaseAndOutsideFile(t *testing.T) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	baseDir := filepath.Join(root, "base")
+	if err := os.Mkdir(baseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outsideFile := filepath.Join(root, "outside.txt")
+	if err := os.WriteFile(outsideFile, []byte("secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return baseDir, outsideFile
+}
+
+func containsLine(lines []string, want string) bool {
+	return slices.Contains(lines, want)
 }
