@@ -6,6 +6,7 @@ require (
 	github.com/google/go-containerregistry v0.21.5
 	github.com/lithammer/fuzzysearch v1.1.8
 	github.com/moby/buildkit v0.29.0
+	github.com/moby/patternmatcher v0.6.1
 	github.com/samber/slog-multi v1.8.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tonistiigi/fsutil v0.0.0-20251211185533-a2aa163d723f
@@ -46,7 +47,6 @@ require (
 	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/moby/locker v1.0.1 // indirect
-	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/signal v0.7.1 // indirect
 	github.com/morikuni/aec v1.1.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect

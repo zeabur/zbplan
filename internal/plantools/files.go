@@ -10,12 +10,62 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/moby/patternmatcher"
 	"github.com/zendev-sh/goai"
 )
+
+var defaultIgnoredDirs = []string{
+	".git",
+	".venv",
+	"venv",
+	"node_modules",
+	"__pycache__",
+	".mypy_cache",
+	".pytest_cache",
+	".tox",
+	".next",
+	".nuxt",
+	".cache",
+}
+
+func buildShouldIgnore(fsys fs.FS) func(filePath string, isDir bool) bool {
+	patterns := make([]string, len(defaultIgnoredDirs))
+	copy(patterns, defaultIgnoredDirs)
+
+	if data, err := fs.ReadFile(fsys, ".gitignore"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.HasPrefix(line, "#") {
+				patterns = append(patterns, line)
+			}
+		}
+	}
+
+	pm, err := patternmatcher.New(patterns)
+	if err != nil {
+		ignored := make(map[string]bool, len(defaultIgnoredDirs))
+		for _, d := range defaultIgnoredDirs {
+			ignored[d] = true
+		}
+		return func(filePath string, isDir bool) bool {
+			base := path.Base(filePath)
+			return base != "." && ignored[base]
+		}
+	}
+
+	return func(filePath string, isDir bool) bool {
+		if filePath == "." {
+			return false
+		}
+		matched, _ := pm.MatchesOrParentMatches(filePath)
+		return matched
+	}
+}
 
 func NewGlobTool(fsys fs.FS) goai.Tool {
 	type Args struct {
 		Pattern string `json:"pattern"`
+		Limit   int    `json:"limit"`
 	}
 
 	return goai.Tool{
@@ -27,6 +77,11 @@ func NewGlobTool(fsys fs.FS) goai.Tool {
 				"pattern": {
 					"type": "string",
 					"description": "Glob pattern to match files against."
+				},
+				"limit": {
+					"type": "integer",
+					"description": "Maximum number of results to return. Defaults to 100.",
+					"default": 100
 				}
 			},
 			"required": ["pattern"]
@@ -39,17 +94,31 @@ func NewGlobTool(fsys fs.FS) goai.Tool {
 			if args.Pattern == "" {
 				return "", fmt.Errorf("pattern is required")
 			}
+			if args.Limit == 0 {
+				args.Limit = 100
+			}
 
 			matches, err := fs.Glob(fsys, args.Pattern)
 			if err != nil {
 				return "", fmt.Errorf("glob: %w", err)
 			}
 
-			if len(matches) == 0 {
+			shouldIgnore := buildShouldIgnore(fsys)
+			var filtered []string
+			for _, m := range matches {
+				if !shouldIgnore(m, false) {
+					filtered = append(filtered, m)
+					if len(filtered) >= args.Limit {
+						break
+					}
+				}
+			}
+
+			if len(filtered) == 0 {
 				return "no files found", nil
 			}
 
-			return strings.Join(matches, "\n"), nil
+			return strings.Join(filtered, "\n"), nil
 		},
 	}
 }
@@ -91,10 +160,20 @@ func NewGrepTool(fsys fs.FS) goai.Tool {
 				return "", fmt.Errorf("compile pattern: %w", err)
 			}
 
+			shouldIgnore := buildShouldIgnore(fsys)
 			var results []string
 			err = fs.WalkDir(fsys, ".", func(filePath string, d fs.DirEntry, err error) error {
-				if err != nil || d.IsDir() {
+				if err != nil {
 					return err
+				}
+				if shouldIgnore(filePath, d.IsDir()) {
+					if d.IsDir() {
+						return fs.SkipDir
+					}
+					return nil
+				}
+				if d.IsDir() {
+					return nil
 				}
 				if args.Glob != "" {
 					matched, matchErr := path.Match(args.Glob, filePath)
@@ -254,12 +333,22 @@ func NewListTool(fsys fs.FS) goai.Tool {
 				return "empty directory", nil
 			}
 
-			names := make([]string, len(entries))
-			for i, entry := range entries {
-				names[i] = entry.Name()
-				if entry.IsDir() {
-					names[i] += "/"
+			shouldIgnore := buildShouldIgnore(fsys)
+			var names []string
+			for _, entry := range entries {
+				entryPath := path.Join(args.Path, entry.Name())
+				if shouldIgnore(entryPath, entry.IsDir()) {
+					continue
 				}
+				name := entry.Name()
+				if entry.IsDir() {
+					name += "/"
+				}
+				names = append(names, name)
+			}
+
+			if len(names) == 0 {
+				return "empty directory", nil
 			}
 
 			return strings.Join(names, "\n"), nil
