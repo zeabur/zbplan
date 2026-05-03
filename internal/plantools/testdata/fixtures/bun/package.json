@@ -3,5 +3,8 @@
   "version": "1.0.0",
   "scripts": {
     "build": "mkdir -p dist && echo '// built' > dist/index.js"
+  },
+  "dependencies": {
+    "ms": "^2.1.3"
   }
 }

@@ -6,7 +6,7 @@ COPY composer.json composer.lock ./
 RUN --mount=type=cache,target=/root/.composer \
     composer install --no-dev --optimize-autoloader --no-interaction
 
-FROM php:8.3-fpm-alpine
+FROM php:8.5-fpm-alpine
 WORKDIR /app
 COPY --from=vendor /app/vendor ./vendor
 COPY . .

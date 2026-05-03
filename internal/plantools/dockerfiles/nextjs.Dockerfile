@@ -1,6 +1,6 @@
 # keywords: react javascript typescript next next.js
 # description: Next.js standalone output: node-alpine builder, minimal node-alpine runtime
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN --mount=type=cache,target=/root/.npm \
@@ -10,7 +10,7 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY . .
 RUN npm run build
 
-FROM node:22-alpine
+FROM node:24-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1

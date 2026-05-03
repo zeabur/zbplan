@@ -1,6 +1,6 @@
 # keywords: pip python3
 # description: Python single-stage build with pip and cache mount
-FROM python:3.12-slim
+FROM python:3.13-slim
 WORKDIR /app
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,source=requirements.txt,target=requirements.txt \

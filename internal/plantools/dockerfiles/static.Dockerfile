@@ -1,6 +1,6 @@
 # keywords: nginx vite spa react vue html
 # description: Static site: node-alpine builder (npm build), nginx-alpine runtime
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 RUN --mount=type=cache,target=/root/.npm \
     --mount=type=bind,source=package.json,target=package.json \

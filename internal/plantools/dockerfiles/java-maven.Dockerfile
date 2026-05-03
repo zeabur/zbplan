@@ -1,6 +1,6 @@
 # keywords: mvn spring springboot jvm
 # description: Java Maven multi-stage: temurin JDK builder with .m2 cache, temurin JRE runtime
-FROM eclipse-temurin:21-jdk-alpine AS builder
+FROM maven:3.9-eclipse-temurin-21-alpine AS builder
 WORKDIR /app
 RUN --mount=type=cache,target=/root/.m2 \
     --mount=type=bind,source=pom.xml,target=pom.xml \

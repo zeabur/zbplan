@@ -1,6 +1,6 @@
 # keywords: nodejs javascript typescript
 # description: Node.js build with pnpm (corepack) and store cache mount
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 RUN corepack enable pnpm
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
@@ -10,7 +10,7 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 COPY . .
 RUN pnpm build
 
-FROM node:22-alpine
+FROM node:24-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=builder /app/dist ./dist
