@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/moby/buildkit/client"
 	slogmulti "github.com/samber/slog-multi"
@@ -39,7 +38,7 @@ func (b *BuilderClient) Close() error {
 
 // RunBuild tries to build the given Dockerfile.
 // On failure it returns the captured build logs alongside the error.
-// On success it cleans up the produced OCI tarball and returns empty logs and nil error.
+// On success it returns empty logs and nil error.
 func (b *BuilderClient) RunBuild(ctx context.Context, dockerfile string) (buildLogs string, err error) {
 	logBuf := &bytes.Buffer{}
 	logger := slog.New(slogmulti.Fanout(
@@ -48,17 +47,12 @@ func (b *BuilderClient) RunBuild(ctx context.Context, dockerfile string) (buildL
 	))
 
 	bld := builder.NewBuildkitBuilder(b.client, logger)
-	result, err := bld.BuildOCI(ctx, builder.BuildImageOptions{
+	if err := bld.Build(ctx, builder.BuildImageOptions{
 		Dockerfile: dockerfile,
 		Context:    b.contextDir,
 		Variables:  b.variables,
-	})
-	if err != nil {
+	}); err != nil {
 		return logBuf.String(), fmt.Errorf("build failed: %w", err)
-	}
-
-	if removeErr := os.Remove(result.TarballPath); removeErr != nil {
-		slog.WarnContext(ctx, "failed to clean up tarball", "path", result.TarballPath, "error", removeErr)
 	}
 	return "", nil
 }

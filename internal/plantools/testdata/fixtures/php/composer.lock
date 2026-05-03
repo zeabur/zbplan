@@ -1,0 +1,16 @@
+{
+    "_readme": [
+        "This file is @generated automatically by Composer"
+    ],
+    "content-hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "packages": [],
+    "packages-dev": [],
+    "aliases": [],
+    "minimum-stability": "stable",
+    "stability-flags": [],
+    "prefer-stable": false,
+    "prefer-lowest": false,
+    "platform": {},
+    "platform-dev": {},
+    "plugin-api-version": "2.6.0"
+}

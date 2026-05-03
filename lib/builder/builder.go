@@ -29,6 +29,7 @@ type BuildOCIResult struct {
 }
 
 type Builder interface {
+	Build(ctx context.Context, options BuildImageOptions) error
 	BuildOCI(ctx context.Context, options BuildImageOptions) (*BuildOCIResult, error)
 }
 
@@ -44,12 +45,7 @@ func NewBuildkitBuilder(buildkitClient *client.Client, logger *slog.Logger) *bui
 	}
 }
 
-// BuildImage builds a container image using BuildKit and saves it as an OCI tarball.
-// It returns the path to the generated tarball.
-//
-// dockerfile is the content of Dockerfile. context is the context directory that
-// Dockerfile will build on.
-func (b *builder) BuildOCI(ctx context.Context, options BuildImageOptions) (*BuildOCIResult, error) {
+func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports []client.ExportEntry) error {
 	processor := NewPipelineProcessor()
 	if len(options.Variables) > 0 {
 		keys := slices.Sorted(maps.Keys(options.Variables))
@@ -60,46 +56,32 @@ func (b *builder) BuildOCI(ctx context.Context, options BuildImageOptions) (*Bui
 	dockerfile, err := processor.Process(ctx, options.Dockerfile)
 	if err != nil {
 		b.logger.ErrorContext(ctx, "Failed to pre-process dockerfile", slog.Any("error", err))
-		return nil, fmt.Errorf("pre-process dockerfile: %w", err)
+		return fmt.Errorf("pre-process dockerfile: %w", err)
 	}
 
-	// Create a temporary directory for the output
 	tempDir, err := os.MkdirTemp("", "zbpack-")
 	if err != nil {
 		b.logger.ErrorContext(ctx, "Failed to create temp dir", slog.Any("error", err))
-		return nil, fmt.Errorf("create temp dir: %w", err)
+		return fmt.Errorf("create temp dir: %w", err)
 	}
+	defer os.RemoveAll(tempDir)
 
-	tarballPath := path.Join(tempDir, "image.tar")
-
-	// Create output file
-	b.logger.InfoContext(ctx, "🐳 Writing Dockerfile...")
-	outputFile, err := os.Create(tarballPath)
-	if err != nil {
-		b.logger.ErrorContext(ctx, "Failed to create output file", slog.Any("error", err))
-		return nil, fmt.Errorf("create output file: %w", err)
-	}
-	defer func() {
-		_ = outputFile.Close()
-	}()
-
-	// Create context and dockerfile filesystem access
 	contextFS, err := fsutil.NewFS(options.Context)
 	if err != nil {
 		b.logger.ErrorContext(ctx, "Failed to create context filesystem", slog.Any("error", err))
-		return nil, fmt.Errorf("create context filesystem: %w", err)
+		return fmt.Errorf("create context filesystem: %w", err)
 	}
 
-	err = os.WriteFile(path.Join(tempDir, "Dockerfile"), []byte(dockerfile), 0o644)
-	if err != nil {
+	b.logger.InfoContext(ctx, "🐳 Writing Dockerfile...")
+	if err = os.WriteFile(path.Join(tempDir, "Dockerfile"), []byte(dockerfile), 0o644); err != nil {
 		b.logger.ErrorContext(ctx, "Failed to write dockerfile", slog.Any("error", err))
-		return nil, fmt.Errorf("write dockerfile: %w", err)
+		return fmt.Errorf("write dockerfile: %w", err)
 	}
 
 	dockerfileFS, err := fsutil.NewFS(tempDir)
 	if err != nil {
 		b.logger.ErrorContext(ctx, "Failed to create dockerfile filesystem", slog.Any("error", err))
-		return nil, fmt.Errorf("create dockerfile filesystem: %w", err)
+		return fmt.Errorf("create dockerfile filesystem: %w", err)
 	}
 
 	frontendAttrs := make(map[string]string, len(options.Variables)+1)
@@ -108,7 +90,6 @@ func (b *builder) BuildOCI(ctx context.Context, options BuildImageOptions) (*Bui
 		frontendAttrs["build-arg:ZEABUR_ENV_"+EncodeArgName(k)] = v
 	}
 
-	// Set up solve options
 	solveOpt := client.SolveOpt{
 		LocalMounts: map[string]fsutil.FS{
 			"context":    contextFS,
@@ -116,19 +97,11 @@ func (b *builder) BuildOCI(ctx context.Context, options BuildImageOptions) (*Bui
 		},
 		Frontend:      "dockerfile.v0",
 		FrontendAttrs: frontendAttrs,
-		Exports: []client.ExportEntry{
-			{
-				Type: client.ExporterOCI,
-				Output: func(_ map[string]string) (io.WriteCloser, error) {
-					return outputFile, nil
-				},
-			},
-		},
+		Exports:       exports,
 	}
 
 	b.logger.InfoContext(ctx, "🚢 Building image...")
 
-	// Set up progress display
 	ch := make(chan *client.SolveStatus, 1)
 	egrp, ctx := errgroup.WithContext(ctx)
 
@@ -147,14 +120,54 @@ func (b *builder) BuildOCI(ctx context.Context, options BuildImageOptions) (*Bui
 		return err
 	})
 
-	// Wait for build to complete
 	if err := egrp.Wait(); err != nil {
 		b.logger.ErrorContext(ctx, "Build failed", slog.Any("error", err))
-		return nil, fmt.Errorf("build failed: %w", err)
+		return fmt.Errorf("build failed: %w", err)
+	}
+
+	return nil
+}
+
+// Build runs a BuildKit solve with no exporter. Use this to verify that a
+// Dockerfile builds successfully without producing any artifact.
+func (b *builder) Build(ctx context.Context, options BuildImageOptions) error {
+	if err := b.solve(ctx, options, nil); err != nil {
+		return err
+	}
+	b.logger.InfoContext(ctx, "📦 Build completed.")
+	return nil
+}
+
+// BuildOCI builds a container image using BuildKit and saves it as an OCI
+// tarball. It returns the path to the generated tarball.
+func (b *builder) BuildOCI(ctx context.Context, options BuildImageOptions) (*BuildOCIResult, error) {
+	tarDir, err := os.MkdirTemp("", "zbpack-oci-")
+	if err != nil {
+		b.logger.ErrorContext(ctx, "Failed to create temp dir for tarball", slog.Any("error", err))
+		return nil, fmt.Errorf("create temp dir: %w", err)
+	}
+
+	tarballPath := path.Join(tarDir, "image.tar")
+	outputFile, err := os.Create(tarballPath)
+	if err != nil {
+		b.logger.ErrorContext(ctx, "Failed to create output file", slog.Any("error", err))
+		return nil, fmt.Errorf("create output file: %w", err)
+	}
+	defer func() { _ = outputFile.Close() }()
+
+	exports := []client.ExportEntry{
+		{
+			Type: client.ExporterOCI,
+			Output: func(_ map[string]string) (io.WriteCloser, error) {
+				return outputFile, nil
+			},
+		},
+	}
+
+	if err := b.solve(ctx, options, exports); err != nil {
+		return nil, err
 	}
 
 	b.logger.InfoContext(ctx, "📦 Build completed.", slog.String("tarballPath", tarballPath))
-	return &BuildOCIResult{
-		TarballPath: tarballPath,
-	}, nil
+	return &BuildOCIResult{TarballPath: tarballPath}, nil
 }

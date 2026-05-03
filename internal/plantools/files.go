@@ -86,6 +86,9 @@ func (t *globTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 		Pattern string `json:"pattern"`
 		Limit   int    `json:"limit"`
 	}
+	if argsJSON == "" {
+		argsJSON = "{}"
+	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("unmarshal: %w", err)
 	}
@@ -151,6 +154,9 @@ func (t *grepTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 		Pattern string `json:"pattern"`
 		Glob    string `json:"glob"`
 		Limit   int    `json:"limit"`
+	}
+	if argsJSON == "" {
+		argsJSON = "{}"
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("unmarshal: %w", err)
@@ -256,6 +262,9 @@ func (t *readTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 		Offset int    `json:"offset"`
 		Limit  int    `json:"limit"`
 	}
+	if argsJSON == "" {
+		argsJSON = "{}"
+	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("unmarshal: %w", err)
 	}
@@ -312,6 +321,9 @@ func (t *listTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 func (t *listTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Option) (string, error) {
 	var args struct {
 		Path string `json:"path"`
+	}
+	if argsJSON == "" {
+		argsJSON = "{}"
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("unmarshal: %w", err)
@@ -378,6 +390,9 @@ func (t *treeTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 	var args struct {
 		Path  string `json:"path"`
 		Depth int    `json:"depth"`
+	}
+	if argsJSON == "" {
+		argsJSON = "{}"
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("unmarshal: %w", err)

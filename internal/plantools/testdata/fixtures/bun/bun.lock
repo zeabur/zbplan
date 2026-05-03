@@ -1,0 +1,9 @@
+{
+  "lockfileVersion": 0,
+  "workspaces": {
+    "": {
+      "name": "hello"
+    }
+  },
+  "packages": {}
+}

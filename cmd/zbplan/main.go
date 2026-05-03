@@ -37,9 +37,44 @@ Follow these steps in order:
    - Do not open individual source files unless you cannot determine the entry point from manifests alone.
    - Stop exploring once you know: what to COPY, which runtime/version is required, and how to start the app.
 
-2. **Select a base image**: Use the list_images tool to find candidate base images, then use list_tags to find a suitable, up-to-date tag that matches the detected runtime and version requirements.
+2. **Select a base image**: First call get_dockerfile_template with the detected language/framework to get a ready-made template — this saves significant time. Then use list_images and list_tags only to pin the exact image tags. Prefer dedicated toolchain images over bare language runtimes:
+   - Python (uv) → search "uv" on ghcr.io → use ghcr.io/astral-sh/uv
+   - Node + Bun → oven/bun
+   - Node + pnpm/npm → node:*-alpine (enable pnpm via corepack)
+   - Go → golang:*-alpine for build, busybox for runtime
+   - Rust → rust:*-slim for build, busybox for runtime
+   - Java → eclipse-temurin:*-jdk-alpine for build, eclipse-temurin:*-jre-alpine for runtime
 
-3. **Output the Dockerfile**: Write a Dockerfile that correctly builds and runs the application. Follow best practices: use multi-stage builds where appropriate, minimize final image size, avoid running as root, and copy only necessary files.
+3. **Write the Dockerfile** following these practices:
+
+   **Multi-stage builds**: Use named stages (AS builder, AS runtime). Copy only the final artifact into the runtime stage.
+
+   **Cache mounts** — always use --mount=type=cache for package manager steps so repeated builds are fast:
+   - Python/uv:  RUN --mount=type=cache,target=/root/.cache/uv \
+                     uv sync --frozen --no-install-project
+   - Node (npm): RUN --mount=type=cache,target=/root/.npm \
+                     npm ci
+   - Go:         RUN --mount=type=cache,target=/go/pkg/mod \
+                     --mount=type=cache,target=/root/.cache/go-build \
+                     go build -o /app ./...
+   - apt:        RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+                     --mount=type=cache,target=/var/lib/apt,sharing=locked \
+                     apt-get update && apt-get install -y --no-install-recommends <pkgs>
+
+   **Bind mounts** — when a file is only needed during a RUN step and must not become a layer, use --mount=type=bind instead of COPY:
+   - Example:    RUN --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+                     --mount=type=bind,source=uv.lock,target=uv.lock \
+                     uv sync --frozen --no-install-project
+
+   **Layer ordering**: instructions that change rarely (OS deps, dependency install) before instructions that change often (COPY source, compile).
+
+   **Other rules**:
+   - Pin image tags — never use bare latest.
+   - Set WORKDIR explicitly; never use cd in RUN.
+   - Create and switch to a non-root user before CMD.
+   - Use exec-form CMD/ENTRYPOINT (JSON array, not shell string).
+   - Use EXPOSE for the listening port.
+   - With apt, pass --no-install-recommends; if not using a cache mount, end the RUN with rm -rf /var/lib/apt/lists/*.
 
 IMPORTANT: Your ENTIRE response MUST be ONLY the raw Dockerfile content. Do NOT include any explanations, markdown prose, prose of any kind, or code fences. Your response must start with a Dockerfile instruction (FROM, ARG, etc.) and contain nothing else.`
 
@@ -67,7 +102,7 @@ func main() {
 
 	cfg := &claude.Config{
 		APIKey:    os.Getenv("ANTHROPIC_API_KEY"),
-		Model:     "claude-opus-4-6",
+		Model:     "claude-sonnet-4-6",
 		MaxTokens: 8192,
 		Thinking: &claude.Thinking{
 			Enable:       true,
@@ -106,6 +141,7 @@ func main() {
 		ToolCallingModel: chatModel,
 		ToolsConfig: compose.ToolsNodeConfig{
 			Tools: []tool.BaseTool{
+				plantools.NewGetDockerfileTemplateTool(),
 				plantools.NewListImagesTool(),
 				plantools.NewListTagsTool(),
 				plantools.NewTreeTool(*contextDir),

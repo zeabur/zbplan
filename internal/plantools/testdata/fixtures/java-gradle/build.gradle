@@ -1,0 +1,12 @@
+plugins {
+    id 'java'
+}
+
+group = 'hello'
+version = '1.0.0'
+
+jar {
+    manifest {
+        attributes 'Main-Class': 'App'
+    }
+}

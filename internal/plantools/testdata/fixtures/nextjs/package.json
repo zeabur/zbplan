@@ -1,0 +1,7 @@
+{
+  "name": "hello",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "mkdir -p .next/standalone .next/static public && echo '// server' > .next/standalone/server.js"
+  }
+}
