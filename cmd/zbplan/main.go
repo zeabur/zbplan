@@ -68,7 +68,7 @@ Follow these steps in order:
 
 1. **Explore the codebase**: Use the list, glob, grep, and read tools to understand the project structure, language/runtime, dependencies, entry points, and any existing build configuration (e.g. package.json, go.mod, requirements.txt, Makefile, etc.).
 
-2. **Select a base image**: Use the list_docker_images_and_tags tool to find a suitable, up-to-date base image that matches the detected runtime and version requirements.
+2. **Select a base image**: Use the list_images tool to find candidate base images, then use list_tags to find a suitable, up-to-date tag that matches the detected runtime and version requirements.
 
 3. **Draft a Dockerfile**: Write a Dockerfile that correctly builds and runs the application. Follow best practices: use multi-stage builds where appropriate, minimize final image size, avoid running as root, and copy only necessary files.
 
@@ -77,7 +77,8 @@ Follow these steps in order:
 Return the final working Dockerfile.`),
 		goai.WithTools(
 			builderTool,
-			plantools.NewListImagesAndTagsTool(),
+			plantools.NewListImagesTool(),
+			plantools.NewListTagsTool(),
 			plantools.NewGlobTool(contextDirFS),
 			plantools.NewGrepTool(contextDirFS),
 			plantools.NewReadTool(contextDirFS),

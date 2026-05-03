@@ -11,129 +11,148 @@ import (
 	"github.com/zendev-sh/goai"
 )
 
-func NewListImagesAndTagsTool() goai.Tool {
+func NewListImagesTool() goai.Tool {
 	type Args struct {
-		ImageQuery string `json:"image_query"`
-		TagQuery   string `json:"tag_query,omitempty"`
+		Query string `json:"query"`
 	}
 
 	finder := registryutil.NewFinder()
 
 	return goai.Tool{
-		Name:        "list_docker_images_and_tags",
-		Description: "Lists available Docker images and their tags for the given query on docker.io and ghcr.io. Use it for searching the base images.",
+		Name:        "list_images",
+		Description: "Searches for Docker images matching the query on docker.io and ghcr.io. Use this to find candidate base images.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"image_query": {
+				"query": {
 					"type":        "string",
 					"description": "The search query for the image, e.g. 'go', 'python', 'node', 'bun'"
-				},
-				"tag_query": {
-					"type":        "string",
-					"description": "The tag of the image to find, e.g. 'latest', '1.26', '22'. If none is specified, we return the latest tag."
 				}
 			},
-			"required": ["image_query", "tag_query"]
+			"required": ["query"]
 		}`),
 		Execute: func(ctx context.Context, input json.RawMessage) (string, error) {
 			var args Args
-			err := json.Unmarshal(input, &args)
-			if err != nil {
+			if err := json.Unmarshal(input, &args); err != nil {
 				return "", fmt.Errorf("unmarshal input: %w", err)
 			}
-			if args.ImageQuery == "" {
+			if args.Query == "" {
 				return "", fmt.Errorf("query is required")
 			}
 
-			result, err := ListImagesAndTags(ctx, finder, args.ImageQuery, args.TagQuery)
+			result, err := ListImages(ctx, finder, args.Query)
 			if err != nil {
-				return "", fmt.Errorf("find imge: %w", err)
+				return "", fmt.Errorf("list images: %w", err)
 			}
 
-			marshalledResult, err := json.Marshal(result)
+			out, err := json.Marshal(result)
 			if err != nil {
 				return "", fmt.Errorf("marshal result: %w", err)
 			}
-
-			return string(marshalledResult), nil
+			return string(out), nil
 		},
 	}
 }
 
-type ListImagesAndTagsEntry struct {
-	Registry    string             `json:"registry"`
-	Name        string             `json:"name"`
-	Description string             `json:"description"`
-	Tags        []registryutil.Tag `json:"tags"`
-}
-
-func ListImagesAndTags(ctx context.Context, finder registryutil.Finder, imageQuery, tagQuery string) ([]ListImagesAndTagsEntry, error) {
-	const maxSearchResultsForEachRegistry = 3
-	const maxTagsForEachImage = 3
-
-	registries := []string{"docker.io", "ghcr.io"}
-
-	if tagQuery == "" {
-		tagQuery = "latest"
+func NewListTagsTool() goai.Tool {
+	type Args struct {
+		Registry string `json:"registry"`
+		Image    string `json:"image"`
+		Query    string `json:"query,omitempty"`
 	}
 
-	resultChan := make(chan ListImagesAndTagsEntry, maxSearchResultsForEachRegistry*len(registries))
-	results := make([]ListImagesAndTagsEntry, 0, maxSearchResultsForEachRegistry*len(registries))
+	finder := registryutil.NewFinder()
+
+	return goai.Tool{
+		Name:        "list_tags",
+		Description: "Lists tags for a specific Docker image on a given registry. Use this after finding a candidate image with list_images.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"registry": {
+					"type":        "string",
+					"description": "The registry hosting the image, e.g. 'docker.io', 'ghcr.io'"
+				},
+				"image": {
+					"type":        "string",
+					"description": "The image name, e.g. 'golang', 'python', 'library/node'"
+				},
+				"query": {
+					"type":        "string",
+					"description": "Tag filter/search query, e.g. 'latest', '1.26', '22'. Defaults to 'latest' if empty."
+				}
+			},
+			"required": ["registry", "image"]
+		}`),
+		Execute: func(ctx context.Context, input json.RawMessage) (string, error) {
+			var args Args
+			if err := json.Unmarshal(input, &args); err != nil {
+				return "", fmt.Errorf("unmarshal input: %w", err)
+			}
+			if args.Registry == "" {
+				return "", fmt.Errorf("registry is required")
+			}
+			if args.Image == "" {
+				return "", fmt.Errorf("image is required")
+			}
+
+			result, err := ListTags(ctx, finder, args.Registry, args.Image, args.Query)
+			if err != nil {
+				return "", fmt.Errorf("list tags: %w", err)
+			}
+
+			out, err := json.Marshal(result)
+			if err != nil {
+				return "", fmt.Errorf("marshal result: %w", err)
+			}
+			return string(out), nil
+		},
+	}
+}
+
+func ListImages(ctx context.Context, finder registryutil.Finder, query string) ([]registryutil.Image, error) {
+	const maxPerRegistry = 3
+
+	registries := []string{"docker.io", "ghcr.io"}
+	resultChan := make(chan registryutil.Image, maxPerRegistry*len(registries))
 
 	go func() {
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
 		var wg sync.WaitGroup
-
 		for _, registry := range registries {
 			wg.Go(func() {
 				if ctx.Err() != nil {
 					return
 				}
-
-				imageCandidates, err := finder.Images(ctx, registry, imageQuery, maxSearchResultsForEachRegistry)
+				images, err := finder.Images(ctx, registry, query, maxPerRegistry)
 				if err != nil {
 					slog.Error("failed to search images", "registry", registry, "error", err)
 					return
 				}
-
-				if ctx.Err() != nil {
-					return
+				for _, img := range images {
+					resultChan <- img
 				}
-
-				var imageWg sync.WaitGroup
-				for _, imageCandidate := range imageCandidates {
-					imageWg.Go(func() {
-						ctx, cancel := context.WithCancel(ctx)
-						defer cancel()
-
-						tags, err := finder.Tags(ctx, imageCandidate.Registry, imageCandidate.Name, tagQuery, maxTagsForEachImage)
-						if err != nil {
-							slog.Error("failed to find tags", "registry", imageCandidate.Registry, "name", imageCandidate.Name, "error", err)
-							return
-						}
-
-						resultChan <- ListImagesAndTagsEntry{
-							Registry:    imageCandidate.Registry,
-							Name:        imageCandidate.Name,
-							Description: imageCandidate.Description,
-							Tags:        tags,
-						}
-					})
-				}
-				imageWg.Wait()
 			})
 		}
-
 		wg.Wait()
 		close(resultChan)
 	}()
 
-	for result := range resultChan {
-		results = append(results, result)
+	results := make([]registryutil.Image, 0, maxPerRegistry*len(registries))
+	for img := range resultChan {
+		results = append(results, img)
+	}
+	return results, nil
+}
+
+func ListTags(ctx context.Context, finder registryutil.Finder, registry, image, query string) ([]registryutil.Tag, error) {
+	const maxTags = 5
+
+	if query == "" {
+		query = "latest"
 	}
 
-	return results, nil
+	return finder.Tags(ctx, registry, image, query, maxTags)
 }
