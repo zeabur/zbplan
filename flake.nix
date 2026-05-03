@@ -33,6 +33,18 @@
         go = final."go_1_${toString goVersion}";
       };
 
+      packages = forEachSupportedSystem (
+        { pkgs, ... }:
+        {
+          default = pkgs.buildGoModule {
+            pname = "zbplan";
+            version = "0.1.0";
+            src = ./.;
+            vendorHash = "sha256-d+XlUYIZ+cx9i3KMdFtw6Yrrgm4z6PRRJpwVjA58fvY=";
+          };
+        }
+      );
+
       devShells = forEachSupportedSystem (
         { pkgs, system }:
         {
