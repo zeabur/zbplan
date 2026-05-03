@@ -1,0 +1,55 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@f4c468f2287f0f14a113841b41f2dc8957119519 # v3.19.0
+
+      - name: Set up FlakeHub cache
+        uses: DeterminateSystems/flakehub-cache-action@771f7cc21370bb0b97ff0c5dc442073f9f45ebda # v3.19.0
+
+      - name: Run unit tests
+        run: nix develop --command go test ./...
+
+  integration:
+    name: Integration tests
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@f4c468f2287f0f14a113841b41f2dc8957119519 # v3.19.0
+
+      - name: Set up FlakeHub cache
+        uses: DeterminateSystems/flakehub-cache-action@771f7cc21370bb0b97ff0c5dc442073f9f45ebda # v3.19.0
+
+      - name: Verify Docker daemon
+        run: docker info
+
+      - name: Run integration tests
+        run: nix develop --command go test -tags=integration -timeout=30m -count=1 ./internal/plantools/
