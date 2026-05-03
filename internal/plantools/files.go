@@ -73,7 +73,7 @@ func NewGlobTool(baseDir string) tool.InvokableTool { return &globTool{baseDir: 
 func (t *globTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
 		Name: "glob",
-		Desc: "Finds files by pattern. Supports *, ?, and ** (matches any number of directories). Use ** to enumerate manifests across a monorepo in one call, e.g. '**/pyproject.toml'.",
+		Desc: "Finds files and directories by pattern. Directories have a trailing '/'. Supports *, ?, and ** (matches any number of directories). Use ** to enumerate manifests across a monorepo in one call, e.g. '**/pyproject.toml'.",
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"pattern": {Type: schema.String, Desc: "Glob pattern. ** recurses into subdirectories.", Required: true},
 			"limit":   {Type: schema.Integer, Desc: "Maximum number of results to return. Defaults to 100."},
@@ -117,7 +117,15 @@ func (t *globTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 	var filtered []string
 	for _, m := range allMatches {
 		rel := filepath.ToSlash(strings.TrimPrefix(m, prefix))
-		if !shouldIgnore(rel, false) {
+		info, statErr := os.Stat(m)
+		if statErr != nil {
+			continue
+		}
+		isDir := info.IsDir()
+		if !shouldIgnore(rel, isDir) {
+			if isDir {
+				rel += "/"
+			}
 			filtered = append(filtered, rel)
 			if len(filtered) >= args.Limit {
 				break
@@ -126,7 +134,7 @@ func (t *globTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 	}
 
 	if len(filtered) == 0 {
-		return "no files found", nil
+		return "no matches found", nil
 	}
 	return strings.Join(filtered, "\n"), nil
 }
@@ -247,7 +255,7 @@ func NewReadTool(baseDir string) tool.InvokableTool { return &readTool{baseDir: 
 func (t *readTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
 		Name: "read",
-		Desc: "Reads the contents of a file. Supports offset (skip lines) and limit (max lines to return).",
+		Desc: "Reads the contents of a file. If the path is a directory, reports that instead of failing. Supports offset (skip lines) and limit (max lines to return).",
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"path":   {Type: schema.String, Desc: "The path of the file to read.", Required: true},
 			"offset": {Type: schema.Integer, Desc: "Number of lines to skip from the start. Defaults to 0."},
@@ -276,6 +284,14 @@ func (t *readTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 	}
 
 	absPath := filepath.Join(t.baseDir, filepath.FromSlash(args.Path))
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return "", fmt.Errorf("stat path: %w", err)
+	}
+	if info.IsDir() {
+		return "is a directory", nil
+	}
+
 	f, err := os.Open(absPath)
 	if err != nil {
 		return "", fmt.Errorf("open file: %w", err)
