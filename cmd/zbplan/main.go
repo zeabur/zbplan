@@ -67,12 +67,11 @@ func main() {
 
 	cfg := &claude.Config{
 		APIKey:    os.Getenv("ANTHROPIC_API_KEY"),
-		Model:     "claude-opus-4-7",
+		Model:     "claude-opus-4-6",
 		MaxTokens: 8192,
-		AdditionalRequestFields: map[string]any{
-			"thinking": map[string]any{
-				"type": "adaptive",
-			},
+		Thinking: &claude.Thinking{
+			Enable:       true,
+			BudgetTokens: 4096,
 		},
 	}
 	if base := os.Getenv("ANTHROPIC_BASE_URL"); base != "" {
@@ -171,9 +170,18 @@ Build error and logs:
 
 var dockerfenceRe = regexp.MustCompile("(?i)```(?:dockerfile)?\n((?s:.*?))```")
 
+// dockerfileInstructionRe matches a line that begins with a Dockerfile instruction.
+var dockerfileInstructionRe = regexp.MustCompile(`(?i)^(FROM|ARG|RUN|CMD|LABEL|EXPOSE|ENV|ADD|COPY|ENTRYPOINT|VOLUME|USER|WORKDIR|ONBUILD|STOPSIGNAL|HEALTHCHECK|SHELL|#)\b`)
+
 func extractDockerfile(text string) string {
 	if m := dockerfenceRe.FindStringSubmatch(text); m != nil {
 		return strings.TrimSpace(m[1])
+	}
+	// Skip any prose preamble the model may have emitted before the first instruction.
+	for i, line := range strings.Split(text, "\n") {
+		if dockerfileInstructionRe.MatchString(strings.TrimSpace(line)) {
+			return strings.TrimSpace(strings.Join(strings.Split(text, "\n")[i:], "\n"))
+		}
 	}
 	return strings.TrimSpace(text)
 }
