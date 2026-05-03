@@ -105,7 +105,7 @@ func main() {
 	}()
 
 	cfg := &claude.Config{
-		APIKey:    os.Getenv("ANTHROPIC_API_KEY"),
+		APIKey:    os.Getenv("ZBPLAN_ANTHROPIC_API_KEY"),
 		Model:     "claude-sonnet-4-6",
 		MaxTokens: 8192,
 		Thinking: &claude.Thinking{
@@ -113,10 +113,10 @@ func main() {
 			BudgetTokens: 4096,
 		},
 	}
-	if base := os.Getenv("ANTHROPIC_BASE_URL"); base != "" {
+	if base := os.Getenv("ZBPLAN_ANTHROPIC_BASE_URL"); base != "" {
 		cfg.BaseURL = &base
 	}
-	if model := os.Getenv("ANTHROPIC_MODEL"); model != "" {
+	if model := os.Getenv("ZBPLAN_ANTHROPIC_MODEL"); model != "" {
 		cfg.Model = model
 	}
 	chatModel, err := claude.NewChatModel(ctx, cfg)

@@ -9,6 +9,15 @@ nix develop --command go test ./...
 nix develop --command go build ./...
 ```
 
+## Lint and format
+
+Always run lint and formatter before committing:
+
+```
+nix develop --command golangci-lint fmt
+nix develop --command golangci-lint run ./...
+```
+
 ## Coding guidelines
 
 ### Mockable design

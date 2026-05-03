@@ -69,7 +69,7 @@ flowchart TD
 需要先提供 Anthropic API key，並準備可連線的 BuildKit server：
 
 ```bash
-ANTHROPIC_API_KEY=... \
+ZBPLAN_ANTHROPIC_API_KEY=... \
 nix develop --command go run ./cmd/zbplan \
   --buildkit-addr tcp://127.0.0.1:1234 \
   --context-dir /path/to/project
