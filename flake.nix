@@ -43,6 +43,7 @@
 
               # goimports, godoc, etc.
               gotools
+              gofumpt
 
               # https://github.com/golangci/golangci-lint
               golangci-lint
