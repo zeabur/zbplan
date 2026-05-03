@@ -131,12 +131,13 @@ func (t *getDockerfileTemplateTool) Info(_ context.Context) (*schema.ToolInfo, e
 	return &schema.ToolInfo{
 		Name: "get_dockerfile_template",
 		Desc: "Returns up to 3 Dockerfile templates that best match the given language or framework query. " +
+			"Use one keyword per query; search the smallest/specific keyword first (for example, query 'uv' and 'python' separately instead of 'python uv'). " +
 			"Templates follow best practices (multi-stage builds, cache mounts, non-root user). " +
 			"Image tags in templates are examples — verify and pin them with list_tags.",
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"query": {
 				Type:     schema.String,
-				Desc:     "Language or framework to search for, e.g. 'go', 'python uv', 'fastapi', 'bun', 'next.js', 'rust', 'java maven'",
+				Desc:     "Single language, framework, or tooling keyword to search for. Use one keyword per query, e.g. 'uv', 'python', 'fastapi', 'bun', 'next.js', 'rust', 'maven'. Prefer the smallest/specific keyword first.",
 				Required: true,
 			},
 		}),
