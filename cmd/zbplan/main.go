@@ -10,15 +10,13 @@ import (
 	"regexp"
 	"strings"
 
+	claude "github.com/cloudwego/eino-ext/components/model/claude"
+	"github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/flow/agent/react"
+	"github.com/cloudwego/eino/schema"
 	"github.com/zeabur/zbplan/internal/plantools"
-
-	"github.com/zendev-sh/goai"
-	"github.com/zendev-sh/goai/provider/compat"
 )
-
-type GeneratedDockerfile struct {
-	Dockerfile string `json:"dockerfile"`
-}
 
 var buildkitAddr = flag.String("buildkit-addr", "", "the address of the buildkit server")
 var contextDir = flag.String("context-dir", "", "the directory to use as the build context")
@@ -28,91 +26,147 @@ func init() {
 	flag.Var(&variables, "variables", "the variables to pass to the build context")
 }
 
+const systemPrompt = `You are an expert DevOps engineer. Your task is to generate a production-ready Dockerfile for the codebase in the current directory.
+
+Follow these steps in order:
+
+1. **Explore the codebase**: Use as few tool calls as possible.
+   - Start with tree (depth=3) for a structural overview, OR use glob with ** to find all manifests at once (e.g. '**/pyproject.toml', '**/package.json', '**/go.mod', '**/Cargo.toml').
+   - Read the relevant manifest files to identify runtime version, dependencies, and entry point.
+   - Avoid serial list calls per directory — tree and glob with ** cover that in one step.
+   - Do not open individual source files unless you cannot determine the entry point from manifests alone.
+   - Stop exploring once you know: what to COPY, which runtime/version is required, and how to start the app.
+
+2. **Select a base image**: Use the list_images tool to find candidate base images, then use list_tags to find a suitable, up-to-date tag that matches the detected runtime and version requirements.
+
+3. **Output the Dockerfile**: Write a Dockerfile that correctly builds and runs the application. Follow best practices: use multi-stage builds where appropriate, minimize final image size, avoid running as root, and copy only necessary files.
+
+IMPORTANT: Your ENTIRE response MUST be ONLY the raw Dockerfile content. Do NOT include any explanations, markdown prose, prose of any kind, or code fences. Your response must start with a Dockerfile instruction (FROM, ARG, etc.) and contain nothing else.`
+
 func main() {
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	model := compat.Chat("claude-opus-4-7",
-		compat.WithAPIKey(os.Getenv("OPENAI_API_KEY")),
-		compat.WithBaseURL(os.Getenv("OPENAI_BASE_URL")),
-	)
-
-	if contextDir == nil || *contextDir == "" {
+	if *contextDir == "" {
 		slog.Error("context-dir is required")
 		os.Exit(1)
 	}
-
-	if buildkitAddr == nil || *buildkitAddr == "" {
+	if *buildkitAddr == "" {
 		slog.Error("buildkit-addr is required")
 		os.Exit(1)
 	}
 
-	contextDirFS := os.DirFS(*contextDir)
-
-	planTools := plantools.BuilderBaseContext{
-		BuildkitAddr: *buildkitAddr,
-		ContextDir:   *contextDir,
-		Variables:    variables,
-	}
-
-	builderTool, err := plantools.NewDockerfileCanBuildTool(ctx, planTools)
+	builderClient, err := plantools.NewBuilderClient(ctx, *buildkitAddr, *contextDir, variables)
 	if err != nil {
-		slog.Error("failed to create build_and_check_dockerfile tool", "error", err)
+		slog.Error("failed to create builder client", "error", err)
 		os.Exit(1)
 	}
+	defer builderClient.Close()
 
-	result, err := goai.GenerateText(ctx, model,
-		goai.WithSystem(`You are an expert DevOps engineer. Your task is to generate a production-ready Dockerfile for the codebase in the current directory.
-
-Follow these steps in order:
-
-1. **Explore the codebase**: Use the list, glob, grep, and read tools to understand the project structure, language/runtime, dependencies, entry points, and any existing build configuration (e.g. package.json, go.mod, requirements.txt, Makefile, etc.). Use as few tool calls as possible — stop once you know the code structure (what to copy), required versions, and startup parameters.
-
-2. **Select a base image**: Use the list_images tool to find candidate base images, then use list_tags to find a suitable, up-to-date tag that matches the detected runtime and version requirements.
-
-3. **Draft a Dockerfile**: Write a Dockerfile that correctly builds and runs the application. Follow best practices: use multi-stage builds where appropriate, minimize final image size, avoid running as root, and copy only necessary files. Prefer fast Dockerfile iteration over exhaustive code exploration.
-
-4. **Verify the build**: Call build_and_check_dockerfile with the drafted Dockerfile. If the build fails, read the error output, fix the Dockerfile, and retry until the build succeeds.
-
-IMPORTANT: Your final response MUST contain only the raw Dockerfile content — no explanations, no markdown prose, no comments outside the Dockerfile itself. Output the Dockerfile and nothing else.`),
-		goai.WithPrompt("Dockerfile:"),
-		goai.WithTools(
-			builderTool,
-			plantools.NewListImagesTool(),
-			plantools.NewListTagsTool(),
-			plantools.NewGlobTool(contextDirFS),
-			plantools.NewGrepTool(contextDirFS),
-			plantools.NewReadTool(contextDirFS),
-			plantools.NewListTool(contextDirFS),
-		),
-		goai.WithProviderOptions(map[string]any{
+	cfg := &claude.Config{
+		APIKey:    os.Getenv("ANTHROPIC_API_KEY"),
+		Model:     "claude-opus-4-7",
+		MaxTokens: 8192,
+		AdditionalRequestFields: map[string]any{
 			"thinking": map[string]any{
 				"type": "adaptive",
 			},
-		}),
-		goai.WithToolChoice("auto"),
-		goai.WithMaxSteps(25),
-		goai.WithOnStepFinish(func(step goai.StepResult) {
-			fmt.Printf("--- Step %d (finish: %s, tools: %d) ---\n",
-				step.Number, step.FinishReason, len(step.ToolCalls))
-		}),
-		goai.WithOnToolCallStart(func(tcsi goai.ToolCallStartInfo) {
-			fmt.Printf("  Tool (start): %s: %s\n", tcsi.ToolName, tcsi.Input)
-		}),
-		goai.WithOnToolCall(func(info goai.ToolCallInfo) {
-			fmt.Printf("  Tool: %s: %s -> %s...\n", info.ToolName, info.Input, info.Output[:min(50, len(info.Output))])
-		}),
-	)
+		},
+	}
+	if base := os.Getenv("ANTHROPIC_BASE_URL"); base != "" {
+		cfg.BaseURL = &base
+	}
+	chatModel, err := claude.NewChatModel(ctx, cfg)
 	if err != nil {
-		slog.Error("failed to generate dockerfile", "error", err)
+		slog.Error("failed to create chat model", "error", err)
 		os.Exit(1)
 	}
 
-	fmt.Println(extractDockerfile(result.Text))
-	fmt.Printf("# Tokens: %d in, %d out, %d for reasoning.\n",
-		result.TotalUsage.InputTokens, result.TotalUsage.OutputTokens, result.TotalUsage.ReasoningTokens)
+	loggingMiddleware := compose.ToolMiddleware{
+		Invokable: func(next compose.InvokableToolEndpoint) compose.InvokableToolEndpoint {
+			return func(ctx context.Context, input *compose.ToolInput) (*compose.ToolOutput, error) {
+				slog.InfoContext(ctx, "tool call", "name", input.Name, "args", input.Arguments)
+				out, err := next(ctx, input)
+				if err != nil {
+					slog.ErrorContext(ctx, "tool error", "name", input.Name, "error", err)
+					return nil, err
+				}
+				snippet := out.Result
+				if len(snippet) > 100 {
+					snippet = snippet[:100] + "..."
+				}
+				slog.InfoContext(ctx, "tool result", "name", input.Name, "result", snippet)
+				return out, nil
+			}
+		},
+	}
+
+	reactAgent, err := react.NewAgent(ctx, &react.AgentConfig{
+		ToolCallingModel: chatModel,
+		ToolsConfig: compose.ToolsNodeConfig{
+			Tools: []tool.BaseTool{
+				plantools.NewListImagesTool(),
+				plantools.NewListTagsTool(),
+				plantools.NewTreeTool(*contextDir),
+				plantools.NewGlobTool(*contextDir),
+				plantools.NewGrepTool(*contextDir),
+				plantools.NewReadTool(*contextDir),
+				plantools.NewListTool(*contextDir),
+			},
+			ToolCallMiddlewares: []compose.ToolMiddleware{loggingMiddleware},
+		},
+		MaxStep: 100,
+	})
+	if err != nil {
+		slog.Error("failed to create agent", "error", err)
+		os.Exit(1)
+	}
+
+	const maxBuildAttempts = 3
+	prompt := "Generate the Dockerfile for the codebase in the current directory."
+	var lastDockerfile string
+
+	for attempt := 1; attempt <= maxBuildAttempts; attempt++ {
+		slog.Info("generating dockerfile", "attempt", attempt)
+
+		msg, err := reactAgent.Generate(ctx, []*schema.Message{
+			{Role: schema.System, Content: systemPrompt},
+			{Role: schema.User, Content: prompt},
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "exceeds max steps") {
+				slog.Warn("agent exceeded max steps, retrying with efficiency hint", "attempt", attempt)
+				prompt = "You used too many tool calls in the previous attempt. This time make at most 5 tool calls total: start with tree (depth=3) or glob ('**/pyproject.toml' etc.) for a quick overview, then output ONLY the raw Dockerfile — no explanations, no code fences."
+				continue
+			}
+			slog.Error("failed to generate dockerfile", "error", err)
+			os.Exit(1)
+		}
+
+		dockerfile := extractDockerfile(msg.Content)
+		lastDockerfile = dockerfile
+
+		slog.Info("trying to build dockerfile", "attempt", attempt)
+		buildLogs, buildErr := builderClient.RunBuild(ctx, dockerfile)
+		if buildErr == nil {
+			fmt.Println(dockerfile)
+			return
+		}
+
+		slog.Warn("build failed", "attempt", attempt, "error", buildErr)
+		prompt = fmt.Sprintf(`The previous Dockerfile failed to build. Fix it and emit ONLY the corrected Dockerfile — no explanations, no code fences.
+
+Previous Dockerfile:
+%s
+
+Build error and logs:
+%s`, dockerfile, buildLogs)
+	}
+
+	slog.Error("dockerfile failed to build after all retries", "attempts", maxBuildAttempts, "last_dockerfile", lastDockerfile)
+	os.Exit(1)
 }
 
 var dockerfenceRe = regexp.MustCompile("(?i)```(?:dockerfile)?\n((?s:.*?))```")
