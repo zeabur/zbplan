@@ -127,6 +127,7 @@ func NewGrepTool(fsys fs.FS) goai.Tool {
 	type Args struct {
 		Pattern string `json:"pattern"`
 		Glob    string `json:"glob"`
+		Limit   int    `json:"limit"`
 	}
 
 	return goai.Tool{
@@ -142,6 +143,11 @@ func NewGrepTool(fsys fs.FS) goai.Tool {
 				"glob": {
 					"type": "string",
 					"description": "Optional glob pattern (supports * and ?) to filter which files are searched."
+				},
+				"limit": {
+					"type": "integer",
+					"description": "Maximum number of matching lines to return. Defaults to 50.",
+					"default": 50
 				}
 			},
 			"required": ["pattern"]
@@ -153,6 +159,9 @@ func NewGrepTool(fsys fs.FS) goai.Tool {
 			}
 			if args.Pattern == "" {
 				return "", fmt.Errorf("pattern is required")
+			}
+			if args.Limit == 0 {
+				args.Limit = 50
 			}
 
 			re, err := regexp.Compile(args.Pattern)
@@ -174,6 +183,9 @@ func NewGrepTool(fsys fs.FS) goai.Tool {
 				}
 				if d.IsDir() {
 					return nil
+				}
+				if len(results) >= args.Limit {
+					return fs.SkipAll
 				}
 				if args.Glob != "" {
 					matched, matchErr := path.Match(args.Glob, filePath)
@@ -201,6 +213,9 @@ func NewGrepTool(fsys fs.FS) goai.Tool {
 					line := scanner.Text()
 					if re.MatchString(line) {
 						results = append(results, fmt.Sprintf("%s:%d: %s", filePath, lineNum, line))
+						if len(results) >= args.Limit {
+							return nil
+						}
 					}
 				}
 				return scanner.Err()
