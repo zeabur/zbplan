@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"maps"
 	"os"
 	"path"
@@ -18,29 +18,29 @@ import (
 	_ "github.com/moby/buildkit/client/connhelper/dockercontainer"
 )
 
-type buildImageOptions struct {
-	buildkitAddress string
-	output          io.Writer
-	variables       map[string]string
+type BuildImageOptions struct {
+	Dockerfile string
+	Context    string
+	Variables  map[string]string
 }
 
-type BuildImageOptionsFn func(opts *buildImageOptions)
-
-func WithBuildKitAddress(address string) BuildImageOptionsFn {
-	return func(opts *buildImageOptions) {
-		opts.buildkitAddress = address
-	}
+type BuildOCIResult struct {
+	TarballPath string
 }
 
-func WithBuildOutput(output io.Writer) BuildImageOptionsFn {
-	return func(opts *buildImageOptions) {
-		opts.output = output
-	}
+type Builder interface {
+	BuildOCI(ctx context.Context, options BuildImageOptions) (*BuildOCIResult, error)
 }
 
-func WithVariables(variables map[string]string) BuildImageOptionsFn {
-	return func(opts *buildImageOptions) {
-		opts.variables = variables
+type builder struct {
+	buildkitClient *client.Client
+	logger         *slog.Logger
+}
+
+func NewBuildkitBuilder(buildkitClient *client.Client, logger *slog.Logger) *builder {
+	return &builder{
+		buildkitClient: buildkitClient,
+		logger:         logger,
 	}
 }
 
@@ -49,70 +49,62 @@ func WithVariables(variables map[string]string) BuildImageOptionsFn {
 //
 // dockerfile is the content of Dockerfile. context is the context directory that
 // Dockerfile will build on.
-func BuildImage(ctx context.Context, dockerfile string, context string, opts ...BuildImageOptionsFn) (string, error) {
-	opt := &buildImageOptions{
-		output:    os.Stderr,
-		variables: map[string]string{},
-	}
-	for _, fn := range opts {
-		fn(opt)
-	}
-
+func (b *builder) BuildOCI(ctx context.Context, options BuildImageOptions) (*BuildOCIResult, error) {
 	processor := NewPipelineProcessor()
-	if len(opt.variables) > 0 {
-		keys := slices.Sorted(maps.Keys(opt.variables))
+	if len(options.Variables) > 0 {
+		keys := slices.Sorted(maps.Keys(options.Variables))
 		processor.Processors = append(processor.Processors, &EnvProcessor{Variables: keys})
 	}
 
-	_, _ = fmt.Fprintf(opt.output, "🔧 Pre-processing Dockerfile...\n")
-	dockerfile, err := processor.Process(ctx, dockerfile)
+	b.logger.InfoContext(ctx, "🔧 Pre-processing Dockerfile...")
+	dockerfile, err := processor.Process(ctx, options.Dockerfile)
 	if err != nil {
-		return "", fmt.Errorf("pre-process dockerfile: %w", err)
+		b.logger.ErrorContext(ctx, "Failed to pre-process dockerfile", slog.Any("error", err))
+		return nil, fmt.Errorf("pre-process dockerfile: %w", err)
 	}
 
 	// Create a temporary directory for the output
 	tempDir, err := os.MkdirTemp("", "zbpack-")
 	if err != nil {
-		return "", fmt.Errorf("create temp dir: %w", err)
+		b.logger.ErrorContext(ctx, "Failed to create temp dir", slog.Any("error", err))
+		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
 
-	outputPath := path.Join(tempDir, "image.tar")
-
-	// Initialize BuildKit client
-	_, _ = fmt.Fprintf(opt.output, "🔌 Initializing build environment...\n")
-	c, err := client.New(ctx, opt.buildkitAddress)
-	if err != nil {
-		return "", fmt.Errorf("create buildkit client: %w", err)
-	}
+	tarballPath := path.Join(tempDir, "image.tar")
 
 	// Create output file
-	outputFile, err := os.Create(outputPath)
+	b.logger.InfoContext(ctx, "🐳 Writing Dockerfile...")
+	outputFile, err := os.Create(tarballPath)
 	if err != nil {
-		return "", fmt.Errorf("create output file: %w", err)
+		b.logger.ErrorContext(ctx, "Failed to create output file", slog.Any("error", err))
+		return nil, fmt.Errorf("create output file: %w", err)
 	}
 	defer func() {
 		_ = outputFile.Close()
 	}()
 
 	// Create context and dockerfile filesystem access
-	contextFS, err := fsutil.NewFS(context)
+	contextFS, err := fsutil.NewFS(options.Context)
 	if err != nil {
-		return "", fmt.Errorf("create context filesystem: %w", err)
+		b.logger.ErrorContext(ctx, "Failed to create context filesystem", slog.Any("error", err))
+		return nil, fmt.Errorf("create context filesystem: %w", err)
 	}
 
 	err = os.WriteFile(path.Join(tempDir, "Dockerfile"), []byte(dockerfile), 0o644)
 	if err != nil {
-		return "", fmt.Errorf("write dockerfile: %w", err)
+		b.logger.ErrorContext(ctx, "Failed to write dockerfile", slog.Any("error", err))
+		return nil, fmt.Errorf("write dockerfile: %w", err)
 	}
 
 	dockerfileFS, err := fsutil.NewFS(tempDir)
 	if err != nil {
-		return "", fmt.Errorf("create dockerfile filesystem: %w", err)
+		b.logger.ErrorContext(ctx, "Failed to create dockerfile filesystem", slog.Any("error", err))
+		return nil, fmt.Errorf("create dockerfile filesystem: %w", err)
 	}
 
-	frontendAttrs := make(map[string]string, len(opt.variables)+1)
+	frontendAttrs := make(map[string]string, len(options.Variables)+1)
 	frontendAttrs["filename"] = "Dockerfile"
-	for k, v := range opt.variables {
+	for k, v := range options.Variables {
 		frontendAttrs["build-arg:ZEABUR_ENV_"+EncodeArgName(k)] = v
 	}
 
@@ -134,19 +126,20 @@ func BuildImage(ctx context.Context, dockerfile string, context string, opts ...
 		},
 	}
 
-	_, _ = fmt.Fprintf(opt.output, "⏳ Building image...\n")
+	b.logger.InfoContext(ctx, "🚢 Building image...")
 
 	// Set up progress display
 	ch := make(chan *client.SolveStatus, 1)
 	egrp, ctx := errgroup.WithContext(ctx)
 
 	egrp.Go(func() error {
-		_, err := c.Solve(ctx, nil, solveOpt, ch)
+		_, err := b.buildkitClient.Solve(ctx, nil, solveOpt, ch)
 		return err
 	})
 
 	egrp.Go(func() error {
-		d, err := progressui.NewDisplay(opt.output, progressui.AutoMode)
+		output := NewSlogWriter(b.logger, "buildkit progress")
+		d, err := progressui.NewDisplay(output, progressui.AutoMode)
 		if err != nil {
 			return err
 		}
@@ -156,11 +149,12 @@ func BuildImage(ctx context.Context, dockerfile string, context string, opts ...
 
 	// Wait for build to complete
 	if err := egrp.Wait(); err != nil {
-		return "", fmt.Errorf("build failed: %w", err)
+		b.logger.ErrorContext(ctx, "Build failed", slog.Any("error", err))
+		return nil, fmt.Errorf("build failed: %w", err)
 	}
 
-	log.Println("Built image: ", outputPath)
-	_, _ = fmt.Fprintf(opt.output, "📦 Build completed. Ready to push.\n")
-
-	return outputPath, nil
+	b.logger.InfoContext(ctx, "📦 Build completed.", slog.String("tarballPath", tarballPath))
+	return &BuildOCIResult{
+		TarballPath: tarballPath,
+	}, nil
 }

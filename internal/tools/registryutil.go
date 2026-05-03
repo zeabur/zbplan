@@ -11,7 +11,7 @@ import (
 	"github.com/zendev-sh/goai"
 )
 
-func NewFindImageTool() goai.Tool {
+func NewListImagesAndTagsTool() goai.Tool {
 	type Args struct {
 		Query   string `json:"query"`
 		Version string `json:"version,omitempty"`
@@ -20,8 +20,8 @@ func NewFindImageTool() goai.Tool {
 	finder := registryutil.NewFinder()
 
 	return goai.Tool{
-		Name:        "find_docker_image",
-		Description: "Finds an image available for the given toolchain. Use it for searching the base images. If there is no recommended one, we search it on Docker Hub and ghcr.io.",
+		Name:        "list_docker_images_and_tags",
+		Description: "Lists available Docker images and their tags for the given query on docker.io and ghcr.io. Use it for searching the base images.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -46,7 +46,7 @@ func NewFindImageTool() goai.Tool {
 				return "", fmt.Errorf("query is required")
 			}
 
-			result, err := FindImage(ctx, finder, args.Query, args.Version)
+			result, err := ListImagesAndTags(ctx, finder, args.Query, args.Version)
 			if err != nil {
 				return "", fmt.Errorf("find imge: %w", err)
 			}
@@ -61,14 +61,14 @@ func NewFindImageTool() goai.Tool {
 	}
 }
 
-type FindImageResultEntry struct {
+type ListImagesAndTagsEntry struct {
 	Registry    string             `json:"registry"`
 	Name        string             `json:"name"`
 	Description string             `json:"description"`
 	Tags        []registryutil.Tag `json:"tags"`
 }
 
-func FindImage(ctx context.Context, finder registryutil.Finder, query, version string) ([]FindImageResultEntry, error) {
+func ListImagesAndTags(ctx context.Context, finder registryutil.Finder, query, version string) ([]ListImagesAndTagsEntry, error) {
 	const maxSearchResultsForEachRegistry = 10
 	registries := []string{"docker.io", "ghcr.io"}
 
@@ -76,8 +76,8 @@ func FindImage(ctx context.Context, finder registryutil.Finder, query, version s
 		version = "latest"
 	}
 
-	resultChan := make(chan FindImageResultEntry, maxSearchResultsForEachRegistry*len(registries))
-	results := make([]FindImageResultEntry, 0, maxSearchResultsForEachRegistry*len(registries))
+	resultChan := make(chan ListImagesAndTagsEntry, maxSearchResultsForEachRegistry*len(registries))
+	results := make([]ListImagesAndTagsEntry, 0, maxSearchResultsForEachRegistry*len(registries))
 
 	go func() {
 		ctx, cancel := context.WithCancel(ctx)
@@ -115,7 +115,7 @@ func FindImage(ctx context.Context, finder registryutil.Finder, query, version s
 						}
 						slog.Info("found tags", "registry", imageCandidate.Registry, "name", imageCandidate.Name, "tags", tags)
 
-						resultChan <- FindImageResultEntry{
+						resultChan <- ListImagesAndTagsEntry{
 							Registry:    imageCandidate.Registry,
 							Name:        imageCandidate.Name,
 							Description: imageCandidate.Description,
