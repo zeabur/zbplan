@@ -112,6 +112,9 @@ func main() {
 	if base := os.Getenv("ANTHROPIC_BASE_URL"); base != "" {
 		cfg.BaseURL = &base
 	}
+	if model := os.Getenv("ANTHROPIC_MODEL"); model != "" {
+		cfg.Model = model
+	}
 	chatModel, err := claude.NewChatModel(ctx, cfg)
 	if err != nil {
 		slog.Error("failed to create chat model", "error", err)
