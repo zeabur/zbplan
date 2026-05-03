@@ -84,14 +84,13 @@ Return the final working Dockerfile.`),
 			plantools.NewReadTool(contextDirFS),
 			plantools.NewListTool(contextDirFS),
 		),
-		goai.WithPromptCaching(true),
 		goai.WithMaxSteps(50),
 		goai.WithOnStepFinish(func(step goai.StepResult) {
 			fmt.Printf("--- Step %d (finish: %s, tools: %d) ---\n",
 				step.Number, step.FinishReason, len(step.ToolCalls))
 		}),
 		goai.WithOnToolCall(func(info goai.ToolCallInfo) {
-			fmt.Printf("  Tool: %s: %s\n", info.ToolName, info.Input)
+			fmt.Printf("  Tool: %s: %s -> %s...\n", info.ToolName, info.Input, info.Output[:min(50, len(info.Output))])
 		}),
 	)
 	if err != nil {
