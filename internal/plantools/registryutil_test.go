@@ -1,11 +1,11 @@
-package tools_test
+package plantools_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 
-	"github.com/zeabur/zbplan/internal/tools"
+	"github.com/zeabur/zbplan/internal/plantools"
 	"github.com/zeabur/zbplan/lib/registryutil"
 )
 
@@ -43,7 +43,7 @@ func TestFindImage_ReturnsCombinedResults(t *testing.T) {
 		},
 	}
 
-	results, err := tools.ListImagesAndTags(context.Background(), f, "myimage", "latest")
+	results, err := plantools.ListImagesAndTags(context.Background(), f, "myimage", "latest")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestFindImage_EmptyVersion_ReturnsResults(t *testing.T) {
 		},
 	}
 
-	results, err := tools.ListImagesAndTags(context.Background(), f, "nginx", "")
+	results, err := plantools.ListImagesAndTags(context.Background(), f, "nginx", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestFindImage_ImagesError_PartialResults(t *testing.T) {
 		},
 	}
 
-	results, err := tools.ListImagesAndTags(context.Background(), f, "image", "")
+	results, err := plantools.ListImagesAndTags(context.Background(), f, "image", "")
 	if err != nil {
 		t.Fatalf("FindImage returned unexpected error: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestFindImage_TagsError_ImageExcluded(t *testing.T) {
 		},
 	}
 
-	results, err := tools.ListImagesAndTags(context.Background(), f, "image", "")
+	results, err := plantools.ListImagesAndTags(context.Background(), f, "image", "")
 	if err != nil {
 		t.Fatalf("FindImage returned unexpected error: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestFindImage_NoImages_ReturnsEmpty(t *testing.T) {
 		},
 	}
 
-	results, err := tools.ListImagesAndTags(context.Background(), f, "nonexistent", "")
+	results, err := plantools.ListImagesAndTags(context.Background(), f, "nonexistent", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestFindImage_BothRegistriesError_ReturnsEmpty(t *testing.T) {
 		},
 	}
 
-	results, err := tools.ListImagesAndTags(context.Background(), f, "image", "")
+	results, err := plantools.ListImagesAndTags(context.Background(), f, "image", "")
 	if err != nil {
 		t.Fatalf("FindImage should not propagate registry errors, got: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestFindImage_CancelledContext_ReturnsEmpty(t *testing.T) {
 		},
 	}
 
-	results, err := tools.ListImagesAndTags(ctx, f, "image", "")
+	results, err := plantools.ListImagesAndTags(ctx, f, "image", "")
 	if err != nil {
 		t.Fatalf("unexpected error with cancelled context: %v", err)
 	}

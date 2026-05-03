@@ -1,4 +1,4 @@
-package tools
+package plantools
 
 import (
 	"context"
@@ -13,8 +13,8 @@ import (
 
 func NewListImagesAndTagsTool() goai.Tool {
 	type Args struct {
-		Query   string `json:"query"`
-		Version string `json:"version,omitempty"`
+		ImageQuery string `json:"image_query"`
+		TagQuery   string `json:"tag_query,omitempty"`
 	}
 
 	finder := registryutil.NewFinder()
@@ -25,16 +25,16 @@ func NewListImagesAndTagsTool() goai.Tool {
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"query": {
+				"image_query": {
 					"type":        "string",
-					"description": "The search query for the image, e.g. 'go', 'python', 'node', 'bun'",
+					"description": "The search query for the image, e.g. 'go', 'python', 'node', 'bun'"
 				},
-				"version": {
+				"tag_query": {
 					"type":        "string",
-					"description": "The version of the image to find, e.g. 'latest', '1.26', '22'. If none is specified, we return the latest tag.",
+					"description": "The tag of the image to find, e.g. 'latest', '1.26', '22'. If none is specified, we return the latest tag."
 				}
 			},
-			"required": ["query"],
+			"required": ["image_query", "tag_query"]
 		}`),
 		Execute: func(ctx context.Context, input json.RawMessage) (string, error) {
 			var args Args
@@ -42,11 +42,11 @@ func NewListImagesAndTagsTool() goai.Tool {
 			if err != nil {
 				return "", fmt.Errorf("unmarshal input: %w", err)
 			}
-			if args.Query == "" {
+			if args.ImageQuery == "" {
 				return "", fmt.Errorf("query is required")
 			}
 
-			result, err := ListImagesAndTags(ctx, finder, args.Query, args.Version)
+			result, err := ListImagesAndTags(ctx, finder, args.ImageQuery, args.TagQuery)
 			if err != nil {
 				return "", fmt.Errorf("find imge: %w", err)
 			}
@@ -68,12 +68,14 @@ type ListImagesAndTagsEntry struct {
 	Tags        []registryutil.Tag `json:"tags"`
 }
 
-func ListImagesAndTags(ctx context.Context, finder registryutil.Finder, query, version string) ([]ListImagesAndTagsEntry, error) {
-	const maxSearchResultsForEachRegistry = 10
+func ListImagesAndTags(ctx context.Context, finder registryutil.Finder, imageQuery, tagQuery string) ([]ListImagesAndTagsEntry, error) {
+	const maxSearchResultsForEachRegistry = 3
+	const maxTagsForEachImage = 3
+
 	registries := []string{"docker.io", "ghcr.io"}
 
-	if version == "" {
-		version = "latest"
+	if tagQuery == "" {
+		tagQuery = "latest"
 	}
 
 	resultChan := make(chan ListImagesAndTagsEntry, maxSearchResultsForEachRegistry*len(registries))
@@ -91,7 +93,7 @@ func ListImagesAndTags(ctx context.Context, finder registryutil.Finder, query, v
 					return
 				}
 
-				imageCandidates, err := finder.Images(ctx, registry, query, maxSearchResultsForEachRegistry)
+				imageCandidates, err := finder.Images(ctx, registry, imageQuery, maxSearchResultsForEachRegistry)
 				if err != nil {
 					slog.Error("failed to search images", "registry", registry, "error", err)
 					return
@@ -107,13 +109,11 @@ func ListImagesAndTags(ctx context.Context, finder registryutil.Finder, query, v
 						ctx, cancel := context.WithCancel(ctx)
 						defer cancel()
 
-						slog.Info("found image", "registry", imageCandidate.Registry, "name", imageCandidate.Name, "description", imageCandidate.Description)
-						tags, err := finder.Tags(ctx, imageCandidate.Registry, imageCandidate.Name, "", 10)
+						tags, err := finder.Tags(ctx, imageCandidate.Registry, imageCandidate.Name, tagQuery, maxTagsForEachImage)
 						if err != nil {
 							slog.Error("failed to find tags", "registry", imageCandidate.Registry, "name", imageCandidate.Name, "error", err)
 							return
 						}
-						slog.Info("found tags", "registry", imageCandidate.Registry, "name", imageCandidate.Name, "tags", tags)
 
 						resultChan <- ListImagesAndTagsEntry{
 							Registry:    imageCandidate.Registry,

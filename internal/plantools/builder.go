@@ -1,4 +1,4 @@
-package tools
+package plantools
 
 import (
 	"bytes"
@@ -17,8 +17,8 @@ import (
 type BuilderBaseContext struct {
 	BuildkitAddr string
 
-	Context   string
-	Variables map[string]string
+	ContextDir string
+	Variables  map[string]string
 }
 
 func NewDockerfileCanBuildTool(ctx context.Context, builderContext BuilderBaseContext) (goai.Tool, error) {
@@ -39,10 +39,10 @@ func NewDockerfileCanBuildTool(ctx context.Context, builderContext BuilderBaseCo
 			"properties": {
 				"dockerfile": {
 					"type":        "string",
-					"description": "The Dockerfile attempting to build.",
+					"description": "The Dockerfile attempting to build."
 				}
 			},
-			"required": ["dockerfile"],
+			"required": ["dockerfile"]
 		}`),
 		Execute: func(ctx context.Context, input json.RawMessage) (string, error) {
 			buildLogs := &bytes.Buffer{}
@@ -64,7 +64,7 @@ func NewDockerfileCanBuildTool(ctx context.Context, builderContext BuilderBaseCo
 
 			result, err := buildkitBuilder.BuildOCI(ctx, builder.BuildImageOptions{
 				Dockerfile: args.Dockerfile,
-				Context:    builderContext.Context,
+				Context:    builderContext.ContextDir,
 				Variables:  builderContext.Variables,
 			})
 			if err != nil {
