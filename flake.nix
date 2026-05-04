@@ -60,6 +60,9 @@
               # https://github.com/golangci/golangci-lint
               golangci-lint
 
+              # container tools
+              skopeo
+
               self.formatter.${system}
             ];
           };
