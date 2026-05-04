@@ -37,7 +37,9 @@ func (b *BuilderClient) Close() error {
 	return b.client.Close()
 }
 
-// RunBuildOCI builds the given Dockerfile and streams the resulting OCI tarball to w.
+// RunBuildOCI builds the given Dockerfile and streams the resulting OCI tarball
+// to w. BuildKit closes w during the solve as part of stream finalization;
+// callers do not need to close w after RunBuildOCI returns.
 func (b *BuilderClient) RunBuildOCI(ctx context.Context, dockerfile string, w io.WriteCloser) error {
 	logBuf := &bytes.Buffer{}
 	logger := slog.New(slogmulti.Fanout(

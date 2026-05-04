@@ -39,6 +39,18 @@ type Config struct {
 	UserDockerfile string
 	// OCIOutput receives the OCI image tarball on a successful build.
 	// When nil no OCI tarball is produced (cheaper — only a verify build runs).
+	//
+	// io.WriteCloser is required (rather than io.Writer) because BuildKit's
+	// session layer calls Close() as part of stream finalization: it flushes
+	// any trailing bytes and propagates close errors back into the solve result.
+	// This means Close() carries real semantics — wrapping formats such as
+	// gzip or zstd rely on it to write their closing blocks, and an
+	// io.PipeWriter relies on it to signal EOF to the reader.
+	//
+	// BuildKit calls Close() before Run returns, so callers do not need to
+	// close OCIOutput themselves. Closing it again after Run is harmless for
+	// most implementations (e.g. *os.File silently returns an error that can
+	// be ignored), but is unnecessary.
 	OCIOutput io.WriteCloser
 	// ExtraTools are appended to the default eight plantools tools.
 	ExtraTools []tool.BaseTool

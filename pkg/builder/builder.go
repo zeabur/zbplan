@@ -137,7 +137,10 @@ func (b *builder) Build(ctx context.Context, options BuildImageOptions) error {
 }
 
 // BuildOCI builds a container image using BuildKit and streams the OCI tarball
-// to w.
+// to w. w must be an io.WriteCloser because BuildKit's session layer
+// (session/filesync.DiffCopy) calls Close() for stream finalization and
+// propagates its error into the solve result. w is closed before BuildOCI
+// returns.
 func (b *builder) BuildOCI(ctx context.Context, options BuildImageOptions, w io.WriteCloser) error {
 	exports := []client.ExportEntry{
 		{
