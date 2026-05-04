@@ -5,6 +5,8 @@ run:
 
 linters:
   default: standard
+  enable:
+    - modernize
 
 formatters:
   enable:
