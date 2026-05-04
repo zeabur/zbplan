@@ -39,7 +39,7 @@ type Config struct {
 	UserDockerfile string
 	// OCIOutput receives the OCI image tarball on a successful build.
 	// When nil no OCI tarball is produced (cheaper — only a verify build runs).
-	OCIOutput io.Writer
+	OCIOutput io.WriteCloser
 	// ExtraTools are appended to the default eight plantools tools.
 	ExtraTools []tool.BaseTool
 	// SystemPrompt overrides DefaultSystemPrompt.

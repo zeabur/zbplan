@@ -24,13 +24,9 @@ type BuildImageOptions struct {
 	Variables  map[string]string
 }
 
-type BuildOCIResult struct {
-	TarballPath string
-}
-
 type Builder interface {
 	Build(ctx context.Context, options BuildImageOptions) error
-	BuildOCI(ctx context.Context, options BuildImageOptions) (*BuildOCIResult, error)
+	BuildOCI(ctx context.Context, options BuildImageOptions, w io.WriteCloser) error
 }
 
 type builder struct {
@@ -140,36 +136,22 @@ func (b *builder) Build(ctx context.Context, options BuildImageOptions) error {
 	return nil
 }
 
-// BuildOCI builds a container image using BuildKit and saves it as an OCI
-// tarball. It returns the path to the generated tarball.
-func (b *builder) BuildOCI(ctx context.Context, options BuildImageOptions) (*BuildOCIResult, error) {
-	tarDir, err := os.MkdirTemp("", "zbpack-oci-")
-	if err != nil {
-		b.logger.ErrorContext(ctx, "Failed to create temp dir for tarball", slog.Any("error", err))
-		return nil, fmt.Errorf("create temp dir: %w", err)
-	}
-
-	tarballPath := path.Join(tarDir, "image.tar")
-	outputFile, err := os.Create(tarballPath)
-	if err != nil {
-		b.logger.ErrorContext(ctx, "Failed to create output file", slog.Any("error", err))
-		return nil, fmt.Errorf("create output file: %w", err)
-	}
-	defer func() { _ = outputFile.Close() }()
-
+// BuildOCI builds a container image using BuildKit and streams the OCI tarball
+// to w.
+func (b *builder) BuildOCI(ctx context.Context, options BuildImageOptions, w io.WriteCloser) error {
 	exports := []client.ExportEntry{
 		{
 			Type: client.ExporterOCI,
 			Output: func(_ map[string]string) (io.WriteCloser, error) {
-				return outputFile, nil
+				return w, nil
 			},
 		},
 	}
 
 	if err := b.solve(ctx, options, exports); err != nil {
-		return nil, err
+		return err
 	}
 
-	b.logger.InfoContext(ctx, "📦 Build completed.", slog.String("tarballPath", tarballPath))
-	return &BuildOCIResult{TarballPath: tarballPath}, nil
+	b.logger.InfoContext(ctx, "📦 Build completed.")
+	return nil
 }
