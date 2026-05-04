@@ -6,7 +6,7 @@ AI-powered Dockerfile generation with automatic build-and-fix iteration.
 
 `zbplan` hands the current project to an agent for analysis. The agent searches available Dockerfile templates, Docker Hub / GHCR base images, and image tags, generates a Dockerfile, then passes it to BuildKit for an actual build. If the build fails, the BuildKit logs are fed back to the agent so it can revise the Dockerfile.
 
-In practice, Claude Sonnet 4.6 completes Dockerfile generation in roughly 1–2 rounds at a cost of around US$0.20. Haiku 4.5 has also been tested and can complete generation in fewer than 3 rounds.
+In practice, Claude Sonnet 4.6 completes Dockerfile generation in roughly 1–2 rounds at a cost of around US$0.20.
 
 ## Demo
 

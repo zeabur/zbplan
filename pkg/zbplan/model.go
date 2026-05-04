@@ -18,11 +18,12 @@ type ClaudeConfig struct {
 	Model string
 	// BaseURL overrides the Anthropic API endpoint when non-empty.
 	BaseURL string
-	// MaxTokens defaults to 8192 when zero.
+	// MaxTokens defaults to 16000 when zero. Note: with adaptive thinking
+	// enabled, max_tokens covers both thinking tokens and response text.
 	MaxTokens int
-	// ThinkingBudget is the extended-thinking token budget. Defaults to 4096
-	// when zero. Set to -1 to disable extended thinking entirely.
-	ThinkingBudget int
+	// DisableThinking disables adaptive thinking when true.
+	// By default, adaptive thinking is enabled.
+	DisableThinking bool
 }
 
 // NewClaudeModel returns a Claude tool-calling model from the given config.
@@ -31,10 +32,7 @@ func NewClaudeModel(ctx context.Context, cfg ClaudeConfig) (model.ToolCallingCha
 		cfg.Model = "claude-sonnet-4-6"
 	}
 	if cfg.MaxTokens == 0 {
-		cfg.MaxTokens = 8192
-	}
-	if cfg.ThinkingBudget == 0 {
-		cfg.ThinkingBudget = 4096
+		cfg.MaxTokens = 16000
 	}
 
 	c := &claude.Config{
@@ -42,10 +40,11 @@ func NewClaudeModel(ctx context.Context, cfg ClaudeConfig) (model.ToolCallingCha
 		Model:     cfg.Model,
 		MaxTokens: cfg.MaxTokens,
 	}
-	if cfg.ThinkingBudget > 0 {
-		c.Thinking = &claude.Thinking{
-			Enable:       true,
-			BudgetTokens: cfg.ThinkingBudget,
+	if !cfg.DisableThinking {
+		// eino-ext only exposes budget_tokens thinking; inject adaptive thinking
+		// via AdditionalRequestFields so it is set at the JSON level instead.
+		c.AdditionalRequestFields = map[string]any{
+			"thinking": map[string]any{"type": "adaptive"},
 		}
 	}
 	if cfg.BaseURL != "" {

@@ -6,7 +6,7 @@
 
 `zbplan` 會把專案交給 agent 分析，讓它搜尋可用的 Dockerfile templates、Docker Hub / GHCR base images 與 image tags，產生 Dockerfile 之後再交給 BuildKit 實際編譯。編譯失敗的話，BuildKit logs 會回饋給 agent，讓它重新修正 Dockerfile。
 
-實測 Claude Sonnet 4.6 可以在約 US$0.2 credit、1-2 round 的情況下完成 Dockerfile 的產生。Haiku 4.5 實測也可以在小於 3 個 round 完成 Dockerfile 的產生。
+實測 Claude Sonnet 4.6 可以在約 US$0.2 credit、1-2 round 的情況下完成 Dockerfile 的產生。
 
 ## Demo
 
