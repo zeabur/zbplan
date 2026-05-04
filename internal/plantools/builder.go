@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
-	"path/filepath"
 
 	"github.com/moby/buildkit/client"
 	slogmulti "github.com/samber/slog-multi"
-	"github.com/zeabur/zbplan/lib/builder"
+	"github.com/zeabur/zbplan/pkg/builder"
 )
 
 // BuilderClient wraps a BuildKit client and build context for repeated builds.
@@ -39,9 +37,10 @@ func (b *BuilderClient) Close() error {
 	return b.client.Close()
 }
 
-// RunBuildOCI builds the given Dockerfile, streams the resulting OCI tarball
-// to w, and cleans up the temp directory created by BuildOCI.
-func (b *BuilderClient) RunBuildOCI(ctx context.Context, dockerfile string, w io.Writer) error {
+// RunBuildOCI builds the given Dockerfile and streams the resulting OCI tarball
+// to w. BuildKit closes w during the solve as part of stream finalization;
+// callers do not need to close w after RunBuildOCI returns.
+func (b *BuilderClient) RunBuildOCI(ctx context.Context, dockerfile string, w io.WriteCloser) error {
 	logBuf := &bytes.Buffer{}
 	logger := slog.New(slogmulti.Fanout(
 		slog.Default().Handler(),
@@ -49,24 +48,15 @@ func (b *BuilderClient) RunBuildOCI(ctx context.Context, dockerfile string, w io
 	))
 
 	bld := builder.NewBuildkitBuilder(b.client, logger)
-	res, err := bld.BuildOCI(ctx, builder.BuildImageOptions{
+	if err := bld.BuildOCI(ctx, builder.BuildImageOptions{
 		Dockerfile: dockerfile,
 		Context:    b.contextDir,
 		Variables:  b.variables,
-	})
-	if err != nil {
+	}, w); err != nil {
+		if logs := logBuf.String(); logs != "" {
+			return fmt.Errorf("build oci: %w\n%s", err, logs)
+		}
 		return fmt.Errorf("build oci: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(filepath.Dir(res.TarballPath)) }()
-
-	f, err := os.Open(res.TarballPath)
-	if err != nil {
-		return fmt.Errorf("open oci tarball: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-
-	if _, err := io.Copy(w, f); err != nil {
-		return fmt.Errorf("copy oci tarball: %w", err)
 	}
 	return nil
 }

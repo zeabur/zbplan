@@ -9,7 +9,7 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	"github.com/zeabur/zbplan/lib/registryutil"
+	"github.com/zeabur/zbplan/pkg/registryutil"
 )
 
 type listImagesTool struct {

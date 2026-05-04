@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/zeabur/zbplan/lib/builder"
+	"github.com/zeabur/zbplan/pkg/builder"
 )
 
 var validArgNameRegex = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
