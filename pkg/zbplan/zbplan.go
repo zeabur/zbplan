@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
+	claude "github.com/cloudwego/eino-ext/components/model/claude"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
@@ -153,8 +154,12 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	for attempt := 1; attempt <= cfg.MaxBuildAttempts; attempt++ {
 		cfg.Logger.InfoContext(ctx, "generating dockerfile", "attempt", attempt)
 
+		systemMsg := claude.SetMessageCacheControl(
+			&schema.Message{Role: schema.System, Content: cfg.SystemPrompt},
+			&claude.CacheControl{TTL: claude.CacheTTL1h},
+		)
 		msg, err := reactAgent.Generate(ctx, []*schema.Message{
-			{Role: schema.System, Content: cfg.SystemPrompt},
+			systemMsg,
 			{Role: schema.User, Content: prompt},
 		})
 		if err != nil {
