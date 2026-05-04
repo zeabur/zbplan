@@ -57,6 +57,10 @@ Follow these steps in order:
    - Use exec-form CMD/ENTRYPOINT (JSON array, not shell string).
    - Use EXPOSE for the listening port.
    - With apt, pass --no-install-recommends; if not using a cache mount, end the RUN with rm -rf /var/lib/apt/lists/*.
+   - For multi-line file writes in RUN steps, use heredoc syntax instead of printf/echo with escape sequences:
+     RUN cat <<'EOF' > /etc/nginx/conf.d/app.conf
+     server { ... }
+     EOF
 
 IMPORTANT: Your ENTIRE response MUST be ONLY the raw Dockerfile content. Do NOT include any explanations, markdown prose, prose of any kind, or code fences. Your response must start with a Dockerfile instruction (FROM, ARG, etc.) and contain nothing else.`
 
