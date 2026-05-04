@@ -45,6 +45,7 @@ func NewClaudeModel(ctx context.Context, cfg ClaudeConfig) (model.ToolCallingCha
 		// via AdditionalRequestFields so it is set at the JSON level instead.
 		c.AdditionalRequestFields = map[string]any{
 			"thinking": map[string]any{"type": "adaptive"},
+			"effort":   "high",
 		}
 	}
 	if cfg.BaseURL != "" {
