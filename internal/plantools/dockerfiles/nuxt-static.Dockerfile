@@ -1,5 +1,5 @@
 # keywords: nuxt nitro vue static generate spa prerender
-# description: Nuxt static-site build (nuxt generate), pnpm builder, nginx-alpine runtime serving .output/public
+# description: Nuxt static-site build (nuxt generate), pnpm builder, zeabur/caddy-static runtime serving .output/public with native SPA/MPA fallback and _headers/_redirects support
 FROM node:24-alpine AS builder
 WORKDIR /app
 RUN corepack enable pnpm
@@ -10,7 +10,5 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 COPY . .
 RUN pnpm build
 
-FROM nginx:alpine
-COPY --from=builder /app/.output/public /usr/share/nginx/html
-EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
+FROM zeabur/caddy-static:2
+COPY --from=builder /app/.output/public /usr/share/caddy
