@@ -1,0 +1,10 @@
+{
+  "name": "hello",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "mkdir -p .output/public && echo '<html></html>' > .output/public/index.html"
+  },
+  "dependencies": {
+    "ms": "^2.1.3"
+  }
+}

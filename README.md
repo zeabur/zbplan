@@ -130,7 +130,7 @@ flowchart TD
 
 - `cmd/zbplan`: CLI entrypoint. Creates a Claude ReAct agent and runs up to 3 iterations of the generate → build → fix loop.
 - `internal/plantools`: Tools exposed to the agent — project file inspection, Dockerfile template fuzzy search, registry image/tag search, and a BuildKit client wrapper.
-- `internal/plantools/dockerfiles`: Built-in Dockerfile templates, currently covering Bun, Deno, FastAPI, Go, Java Gradle, Java Maven, Next.js, Node npm, Node pnpm, PHP, Python pip, Python uv, Ruby, Rust, and Static.
+- `internal/plantools/dockerfiles`: Built-in Dockerfile templates, currently covering Bun, Deno, FastAPI, Go, Java Gradle, Java Maven, Next.js, Node npm, Node pnpm, Nuxt server, Nuxt static, PHP, Python pip, Python uv, Ruby, Rust, and Static.
 - `lib/registryutil`: Searches Docker Hub / GHCR images and uses fuzzy search to pick tags matching the required version.
 - `lib/builder`: BuildKit builder — handles Dockerfile preprocessing, environment variable injection, build context mounting, and build progress logging.
 

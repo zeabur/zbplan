@@ -18,13 +18,14 @@ Follow these steps in order:
    - Do not open individual source files unless you cannot determine the entry point from manifests alone.
    - Stop exploring once you know: what to COPY, which runtime/version is required, and how to start the app.
 
-2. **Select a base image**: First call get_dockerfile_template with the detected language/framework to get a ready-made template — this saves significant time. Then use list_images and list_tags only to pin the exact image tags. Prefer dedicated toolchain images over bare language runtimes:
+2. **Select a base image**: First call get_dockerfile_template with the detected language/framework to get a ready-made template — this saves significant time. Then use list_images and list_tags to pin the exact image tags; prefer the latest version — when a template references node:24-alpine, call list_tags for the major (24) and pin to its newest minor/patch (e.g. node:24.9.0-alpine). Prefer dedicated toolchain images over bare language runtimes:
    - Python (uv) → search "uv" on ghcr.io → use ghcr.io/astral-sh/uv
    - Node + Bun → oven/bun
    - Node + pnpm/npm → node:*-alpine (enable pnpm via corepack)
    - Go → golang:*-alpine for build, busybox for runtime
    - Rust → rust:*-slim for build, busybox for runtime
    - Java → eclipse-temurin:*-jdk-alpine for build, eclipse-temurin:*-jre-alpine for runtime
+   - Nuxt / Nitro → call get_dockerfile_template("nuxt"). Check package.json: if the build script invokes 'nuxt generate' → use the nuxt-static template (NGINX runtime, serves .output/public/). Otherwise → use the nuxt-server template and set ENV NITRO_PRESET=node-server before the build step (output lands in .output/server/index.mjs). For Bun-based projects: swap the base image to oven/bun, set NITRO_PRESET=bun, and run with 'bun run .output/server/index.mjs'. Always set NITRO_PRESET explicitly for any Nitro-derived framework so the build output matches the runtime image.
 
 3. **Write the Dockerfile** following these practices:
 

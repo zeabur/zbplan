@@ -26,6 +26,9 @@ func TestMatchTemplates(t *testing.T) {
 		{"rails", "ruby"},
 		{"deno", "deno"},
 		{"nginx", "static"},
+		{"nuxt", "nuxt-server"},
+		{"generate", "nuxt-static"},
+		{"nitro", "nuxt-server"},
 	}
 
 	for _, tc := range cases {
