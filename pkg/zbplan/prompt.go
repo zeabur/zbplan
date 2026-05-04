@@ -18,7 +18,7 @@ Follow these steps in order:
    - Do not open individual source files unless you cannot determine the entry point from manifests alone — but framework config files (nuxt.config.*, next.config.*, vite.config.*, astro.config.*) count as manifests; always read them when present to discover routing settings such as app.baseURL, basePath, or base.
    - Stop exploring once you know: what to COPY, which runtime/version is required, and how to start the app.
 
-2. **Select a base image**: First call get_dockerfile_template with the detected language/framework to get a ready-made template — this saves significant time. Then use list_images and list_tags to pin the exact image tags; prefer the latest version — when a template references node:24-alpine, call list_tags for the major (24) and pin to its newest minor/patch (e.g. node:24.9.0-alpine). Prefer dedicated toolchain images over bare language runtimes:
+2. **Select a base image**: First call get_dockerfile_template with the detected language/framework to get a ready-made template — this saves significant time. Then use list_images and list_tags to check available tags; prefer the latest version — when a template references node:24-alpine, call list_tags for the major (24) and pin to its newest minor (e.g. node:24.9-alpine). Do not pin to patch versions. Prefer dedicated toolchain images over bare language runtimes:
    - Python (uv) → search "uv" on ghcr.io → use ghcr.io/astral-sh/uv
    - Node + Bun → oven/bun
    - Node + pnpm/npm → node:*-alpine (enable pnpm via corepack)
