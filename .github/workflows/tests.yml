@@ -18,7 +18,7 @@ concurrency:
 jobs:
   lint:
     name: Lint and format
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
 
     steps:
       - name: Checkout
@@ -38,7 +38,7 @@ jobs:
 
   unit:
     name: Unit tests
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
 
     steps:
       - name: Checkout
@@ -55,7 +55,7 @@ jobs:
 
   integration:
     name: Integration tests
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: blacksmith-8vcpu-ubuntu-2404-arm
     timeout-minutes: 45
 
     steps:
