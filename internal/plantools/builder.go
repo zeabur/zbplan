@@ -53,6 +53,9 @@ func (b *BuilderClient) RunBuildOCI(ctx context.Context, dockerfile string, w io
 		Context:    b.contextDir,
 		Variables:  b.variables,
 	}, w); err != nil {
+		if logs := logBuf.String(); logs != "" {
+			return fmt.Errorf("build oci: %w\n%s", err, logs)
+		}
 		return fmt.Errorf("build oci: %w", err)
 	}
 	return nil

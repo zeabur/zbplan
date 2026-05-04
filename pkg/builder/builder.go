@@ -142,6 +142,9 @@ func (b *builder) Build(ctx context.Context, options BuildImageOptions) error {
 // propagates its error into the solve result. w is closed before BuildOCI
 // returns.
 func (b *builder) BuildOCI(ctx context.Context, options BuildImageOptions, w io.WriteCloser) error {
+	if w == nil {
+		return fmt.Errorf("nil output writer")
+	}
 	exports := []client.ExportEntry{
 		{
 			Type: client.ExporterOCI,
