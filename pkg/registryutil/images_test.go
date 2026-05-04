@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zeabur/zbplan/lib/registryutil"
+	"github.com/zeabur/zbplan/pkg/registryutil"
 )
 
 // mockTransport serves requests through an http.Handler without a real TCP connection.

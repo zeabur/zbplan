@@ -11,7 +11,7 @@ import (
 
 	"github.com/moby/buildkit/client"
 	slogmulti "github.com/samber/slog-multi"
-	"github.com/zeabur/zbplan/lib/builder"
+	"github.com/zeabur/zbplan/pkg/builder"
 )
 
 // BuilderClient wraps a BuildKit client and build context for repeated builds.

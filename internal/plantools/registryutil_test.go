@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/zeabur/zbplan/internal/plantools"
-	"github.com/zeabur/zbplan/lib/registryutil"
+	"github.com/zeabur/zbplan/pkg/registryutil"
 )
 
 // mockFinder implements registryutil.Finder for testing.

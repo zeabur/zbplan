@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zeabur/zbplan/lib/registryutil"
+	"github.com/zeabur/zbplan/pkg/registryutil"
 )
 
 // Tags — Docker Hub

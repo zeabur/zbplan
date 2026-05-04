@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/zeabur/zbplan/lib/registryutil"
+	"github.com/zeabur/zbplan/pkg/registryutil"
 )
 
 const usage = `Usage:
