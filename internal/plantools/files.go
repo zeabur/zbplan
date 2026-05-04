@@ -39,7 +39,7 @@ func buildShouldIgnore(baseDir string) func(string, bool) bool {
 	copy(patterns, defaultIgnoredDirs)
 
 	if data, err := os.ReadFile(filepath.Join(baseDir, ".gitignore")); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
+		for line := range strings.SplitSeq(string(data), "\n") {
 			line = strings.TrimSpace(line)
 			if line != "" && !strings.HasPrefix(line, "#") {
 				patterns = append(patterns, line)
