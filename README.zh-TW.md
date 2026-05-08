@@ -6,27 +6,33 @@
 
 `zbplan` 會把專案交給 agent 分析，讓它搜尋可用的 Dockerfile templates、Docker Hub / GHCR base images 與 image tags，產生 Dockerfile 之後再交給 BuildKit 實際編譯。編譯失敗的話，BuildKit logs 會回饋給 agent，讓它重新修正 Dockerfile。
 
-實測 Claude Sonnet 4.6 可以在約 US$0.2 credit、1-2 round 的情況下完成 Dockerfile 的產生。
+實測 Claude Sonnet 4.6 和 OpenAI GPT-5.5 可以在約 US$0.2 credit、1-2 round 的情況下完成 Dockerfile 的產生。
 
 ## Demo
 
-[![asciicast](https://asciinema.org/a/Tpy94oq5Re1KqPg4.svg)](https://asciinema.org/a/Tpy94oq5Re1KqPg4)
+[![asciicast](https://asciinema.org/a/w369RBjXfHpaJjfX.svg)](https://asciinema.org/a/w369RBjXfHpaJjfX)
 
 指令：
 
 ```bash
-go run ./cmd/zbplan -context-dir /tmp/coscup-frontend-2026 -buildkit-addr "unix://$HOME/.lima/buildkit/sock/buildkitd.sock"
+# 啟動 buildkitd
+docker run -d --name buildkitd --privileged moby/buildkit:latest
+
+# 執行 zbplan
+time go run ./cmd/zbplan -context-dir /Volumes/Dev/coscup/frontend-2026 -buildkit-addr "docker-container://buildkitd"
 ```
 
-在 [COSCUP/2026](https://github.com/coscup/2026) 儲存庫下，搭配 [Zeabur AI Hub](https://zeabur.com/docs/zh-TW/ai-hub) 進行測試，成本價為 US$0.1946，耗時 2m48s。這個專案是 Nuxt.js 的靜態網站，zbplan 因此選擇了 NGINX，也正確在沒有額外提示的情況下，設定了 root directory 網址。
+使用 [Zeabur AI Hub](https://zeabur.com/docs/zh-TW/ai-hub) 上 GPT 5.5 模型的預設設定，針對 [COSCUP/2026](https://github.com/coscup/2026) 儲存庫測試時，zbplan 嘗試 2 次後完成建置，耗時 1 分 58.165 秒，總成本為 US$0.1937。這個專案是 Nuxt.js 靜態網站，zbplan 在沒有任何額外提示的情況下，選用了[我們的 Caddy 伺服器發行版](https://github.com/zeabur/caddy-static)，並正確設定了 301 redirect。
 
 <details>
 
-<summary>zbplan 生成的 Dockerfile</summary>
+<summary>zbplan 產生的 Dockerfile</summary>
 
 ```dockerfile
-FROM node:24-alpine3.22 AS builder
+FROM node:24.9-alpine AS builder
 WORKDIR /app
+
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
 RUN corepack enable pnpm
 
@@ -34,43 +40,22 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     --mount=type=bind,source=package.json,target=package.json \
     --mount=type=bind,source=pnpm-lock.yaml,target=pnpm-lock.yaml \
     --mount=type=bind,source=pnpm-workspace.yaml,target=pnpm-workspace.yaml \
-    pnpm install --frozen-lockfile
+    pnpm install --frozen-lockfile --ignore-scripts
 
 COPY . .
 
-RUN pnpm build
+ENV NITRO_PRESET=static
+RUN pnpm exec nuxt prepare && pnpm build
 
-FROM nginx:1.28.3-alpine AS runtime
+FROM zeabur/caddy-static:2.0 AS runtime
 
-RUN rm /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/.output/public /usr/share/caddy/2026
 
-COPY --from=builder /app/.output/public /usr/share/nginx/html/2026
-
-RUN printf 'server {\n\
-    listen 8080;\n\
-    server_name _;\n\
-    root /usr/share/nginx/html;\n\
-\n\
-    location /2026/ {\n\
-        try_files $uri $uri/ /2026/index.html;\n\
-    }\n\
-\n\
-    location = / {\n\
-        return 301 /2026/;\n\
-    }\n\
-}\n' > /etc/nginx/conf.d/app.conf
-
-RUN addgroup -S app && adduser -S app -G app \
-    && chown -R app:app /usr/share/nginx/html \
-    && chown -R app:app /var/cache/nginx \
-    && touch /var/run/nginx.pid \
-    && chown app:app /var/run/nginx.pid
-
-USER app
+RUN cat <<'EOF' > /usr/share/caddy/_redirects
+/  /2026/  301
+EOF
 
 EXPOSE 8080
-
-CMD ["nginx", "-g", "daemon off;"]
 ```
 
 </details>
