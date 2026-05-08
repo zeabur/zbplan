@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 )
@@ -62,6 +63,60 @@ func TestCachedTagNames_DoesNotCacheErrors(t *testing.T) {
 	}
 }
 
+func TestCachedCreatedAt_ReusesResults(t *testing.T) {
+	f := NewFinder()
+	repo := mustRepository(t, "docker.io/library/ubuntu")
+	ts := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	calls := 0
+	stubResolveTagCreatedAt(t, func(_ context.Context, _ name.Repository, _, _, _ string) (time.Time, error) {
+		calls++
+		return ts, nil
+	})
+
+	first, err := f.cachedCreatedAt(context.Background(), repo, "noble", "linux", "amd64")
+	if err != nil {
+		t.Fatalf("first cachedCreatedAt: %v", err)
+	}
+	second, err := f.cachedCreatedAt(context.Background(), repo, "noble", "linux", "amd64")
+	if err != nil {
+		t.Fatalf("second cachedCreatedAt: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("expected resolver to be called once, got %d", calls)
+	}
+	if !first.Equal(ts) || !second.Equal(ts) {
+		t.Fatalf("unexpected times: first=%v second=%v", first, second)
+	}
+}
+
+func TestCachedCreatedAt_DoesNotCacheErrors(t *testing.T) {
+	f := NewFinder()
+	repo := mustRepository(t, "docker.io/library/ubuntu")
+	ts := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	calls := 0
+	stubResolveTagCreatedAt(t, func(_ context.Context, _ name.Repository, _, _, _ string) (time.Time, error) {
+		calls++
+		if calls == 1 {
+			return time.Time{}, errors.New("registry unavailable")
+		}
+		return ts, nil
+	})
+
+	if _, err := f.cachedCreatedAt(context.Background(), repo, "noble", "linux", "amd64"); err == nil {
+		t.Fatal("expected first call to return resolver error")
+	}
+	got, err := f.cachedCreatedAt(context.Background(), repo, "noble", "linux", "amd64")
+	if err != nil {
+		t.Fatalf("second cachedCreatedAt: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("expected resolver retry after error, got %d calls", calls)
+	}
+	if !got.Equal(ts) {
+		t.Fatalf("unexpected time: %v", got)
+	}
+}
+
 func stubListRemoteTags(t *testing.T, fn func(context.Context, name.Repository) ([]string, error)) {
 	t.Helper()
 
@@ -69,6 +124,16 @@ func stubListRemoteTags(t *testing.T, fn func(context.Context, name.Repository) 
 	listRemoteTags = fn
 	t.Cleanup(func() {
 		listRemoteTags = original
+	})
+}
+
+func stubResolveTagCreatedAt(t *testing.T, fn func(context.Context, name.Repository, string, string, string) (time.Time, error)) {
+	t.Helper()
+
+	original := resolveTagCreatedAt
+	resolveTagCreatedAt = fn
+	t.Cleanup(func() {
+		resolveTagCreatedAt = original
 	})
 }
 

@@ -78,12 +78,16 @@ func normalizeImage(registry, image string) string {
 	return image
 }
 
+// listRemoteTags is a package-level var to allow test stubbing.
 var listRemoteTags = func(ctx context.Context, repo name.Repository) ([]string, error) {
 	return remote.List(repo,
 		remote.WithContext(ctx),
 		remote.WithAuthFromKeychain(authn.DefaultKeychain),
 	)
 }
+
+// resolveTagCreatedAt is a package-level var to allow test stubbing.
+var resolveTagCreatedAt = resolveCreatedAt
 
 func (f *finder) cachedTagNames(ctx context.Context, repo name.Repository) ([]string, error) {
 	key := repo.Name()
@@ -121,7 +125,7 @@ func (f *finder) cachedCreatedAt(ctx context.Context, repo name.Repository, tagN
 			return createdAt, nil
 		}
 
-		createdAt, err := resolveCreatedAt(ctx, repo, tagName, plOS, plArch)
+		createdAt, err := resolveTagCreatedAt(ctx, repo, tagName, plOS, plArch)
 		if err != nil {
 			return time.Time{}, err
 		}

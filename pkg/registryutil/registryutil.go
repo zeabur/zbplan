@@ -58,7 +58,7 @@ func WithHTTPClient(httpClient *http.Client) FindOption {
 	}
 }
 
-// WithTagsCacheTTL sets the LRU cache for tag names.
+// WithTagNamesCache sets the LRU cache for tag names.
 func WithTagNamesCache(lru *expirable.LRU[string, []string]) FindOption {
 	return func(f *finder) {
 		f.tagNamesCache = lru
