@@ -44,6 +44,10 @@ COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
 
 ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Ensure public/ exists even when the app has none (avoids COPY failure in runner stage)
+RUN mkdir -p public
 
 # Build Next.js application
 RUN --mount=type=cache,target=/app/.next/cache \
@@ -68,6 +72,7 @@ WORKDIR /app
 
 # Set production environment variables
 ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
@@ -75,8 +80,7 @@ ENV HOSTNAME="0.0.0.0"
 COPY --from=builder --chown=node:node /app/public ./public
 
 # Set the correct permission for prerender cache
-RUN mkdir .next
-RUN chown node:node .next
+RUN mkdir .next && chown node:node .next
 
 # Automatically leverage output traces to reduce image size
 # https://nextjs.org/docs/advanced-features/output-file-tracing
