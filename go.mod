@@ -7,6 +7,7 @@ require (
 	github.com/cloudwego/eino-ext/components/model/claude v0.1.17
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
 	github.com/google/go-containerregistry v0.21.5
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/lithammer/fuzzysearch v1.1.8
 	github.com/moby/buildkit v0.29.0
 	github.com/moby/patternmatcher v0.6.1

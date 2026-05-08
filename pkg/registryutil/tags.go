@@ -3,6 +3,7 @@ package registryutil
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -39,10 +40,7 @@ func (f *finder) Tags(ctx context.Context, registry, image, keyword string, limi
 		return nil, fmt.Errorf("invalid repository %q: %w", repoRef, err)
 	}
 
-	tagNames, err := remote.List(repo,
-		remote.WithContext(ctx),
-		remote.WithAuthFromKeychain(authn.DefaultKeychain),
-	)
+	tagNames, err := f.cachedTagNames(ctx, repo)
 	if err != nil {
 		return nil, fmt.Errorf("listing tags for %s: %w", repoRef, err)
 	}
@@ -57,7 +55,7 @@ func (f *finder) Tags(ctx context.Context, registry, image, keyword string, limi
 	plOS, plArch := f.platform()
 	tags := make([]Tag, 0, len(ranked))
 	for _, r := range ranked {
-		t, err := resolveCreatedAt(ctx, repo, r.Target, plOS, plArch)
+		t, err := f.cachedCreatedAt(ctx, repo, r.Target, plOS, plArch)
 		if err != nil {
 			// skip tags whose timestamp can't be resolved
 			continue
@@ -78,6 +76,62 @@ func normalizeImage(registry, image string) string {
 		return "library/" + image
 	}
 	return image
+}
+
+var listRemoteTags = func(ctx context.Context, repo name.Repository) ([]string, error) {
+	return remote.List(repo,
+		remote.WithContext(ctx),
+		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+	)
+}
+
+func (f *finder) cachedTagNames(ctx context.Context, repo name.Repository) ([]string, error) {
+	key := repo.Name()
+	if tagNames, ok := f.tagNamesCache.Get(key); ok {
+		return slices.Clone(tagNames), nil
+	}
+
+	value, err, _ := f.tagNamesGroup.Do(key, func() (any, error) {
+		if tagNames, ok := f.tagNamesCache.Get(key); ok {
+			return tagNames, nil
+		}
+
+		tagNames, err := listRemoteTags(ctx, repo)
+		if err != nil {
+			return nil, err
+		}
+		tagNames = slices.Clone(tagNames)
+		f.tagNamesCache.Add(key, tagNames)
+		return tagNames, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return slices.Clone(value.([]string)), nil
+}
+
+func (f *finder) cachedCreatedAt(ctx context.Context, repo name.Repository, tagName, plOS, plArch string) (time.Time, error) {
+	key := repo.Name() + ":" + tagName + "@" + plOS + "/" + plArch
+	if createdAt, ok := f.tagCreatedAtCache.Get(key); ok {
+		return createdAt, nil
+	}
+
+	value, err, _ := f.tagCreatedAtGroup.Do(key, func() (any, error) {
+		if createdAt, ok := f.tagCreatedAtCache.Get(key); ok {
+			return createdAt, nil
+		}
+
+		createdAt, err := resolveCreatedAt(ctx, repo, tagName, plOS, plArch)
+		if err != nil {
+			return time.Time{}, err
+		}
+		f.tagCreatedAtCache.Add(key, createdAt)
+		return createdAt, nil
+	})
+	if err != nil {
+		return time.Time{}, err
+	}
+	return value.(time.Time), nil
 }
 
 func resolveCreatedAt(ctx context.Context, repo name.Repository, tagName, plOS, plArch string) (time.Time, error) {
