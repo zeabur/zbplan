@@ -5,11 +5,18 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/hashicorp/golang-lru/v2/expirable"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
 	RegistryDockerHub = "docker.io"
 	RegistryGHCR      = "ghcr.io"
+
+	defaultTagCacheTTL = 10 * time.Minute
+	defaultTagCacheMax = 1024
 )
 
 type Tag struct {
@@ -31,6 +38,14 @@ type finder struct {
 	// Format: "os/arch", e.g. "linux/amd64" or "linux/arm64".
 	// Empty defaults to "linux/amd64".
 	Platform string
+
+	tagNamesCache     *expirable.LRU[string, []string]
+	tagCreatedAtCache *expirable.LRU[string, time.Time]
+	tagNamesGroup     singleflight.Group
+	tagCreatedAtGroup singleflight.Group
+
+	listRemoteTags      func(context.Context, name.Repository) ([]string, error)
+	resolveTagCreatedAt func(context.Context, name.Repository, string, string, string) (time.Time, error)
 }
 
 type FindOption func(*finder)
@@ -47,11 +62,47 @@ func WithHTTPClient(httpClient *http.Client) FindOption {
 	}
 }
 
-func NewFinder(options ...FindOption) *finder {
+// WithTagNamesCache sets the LRU cache for tag names.
+func WithTagNamesCache(lru *expirable.LRU[string, []string]) FindOption {
+	return func(f *finder) {
+		f.tagNamesCache = lru
+	}
+}
+
+// WithTagCreatedAtCache sets the LRU cache for tag created at times.
+func WithTagCreatedAtCache(lru *expirable.LRU[string, time.Time]) FindOption {
+	return func(f *finder) {
+		f.tagCreatedAtCache = lru
+	}
+}
+
+func WithListRemoteTags(fn func(context.Context, name.Repository) ([]string, error)) FindOption {
+	return func(f *finder) { f.listRemoteTags = fn }
+}
+
+func WithResolveTagCreatedAt(fn func(context.Context, name.Repository, string, string, string) (time.Time, error)) FindOption {
+	return func(f *finder) { f.resolveTagCreatedAt = fn }
+}
+
+func NewFinder(options ...FindOption) Finder {
 	finderInstance := &finder{}
 	for _, option := range options {
 		option(finderInstance)
 	}
+
+	if finderInstance.tagNamesCache == nil {
+		finderInstance.tagNamesCache = expirable.NewLRU[string, []string](defaultTagCacheMax, nil, defaultTagCacheTTL)
+	}
+	if finderInstance.tagCreatedAtCache == nil {
+		finderInstance.tagCreatedAtCache = expirable.NewLRU[string, time.Time](defaultTagCacheMax, nil, defaultTagCacheTTL)
+	}
+	if finderInstance.listRemoteTags == nil {
+		finderInstance.listRemoteTags = defaultListRemoteTags
+	}
+	if finderInstance.resolveTagCreatedAt == nil {
+		finderInstance.resolveTagCreatedAt = resolveCreatedAt
+	}
+
 	return finderInstance
 }
 
