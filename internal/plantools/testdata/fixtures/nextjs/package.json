@@ -3,5 +3,8 @@
   "version": "1.0.0",
   "scripts": {
     "build": "mkdir -p .next/standalone .next/static public && echo '// server' > .next/standalone/server.js"
+  },
+  "dependencies": {
+    "ms": "^2.1.3"
   }
 }
