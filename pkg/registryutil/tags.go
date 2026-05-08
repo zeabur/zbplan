@@ -78,16 +78,12 @@ func normalizeImage(registry, image string) string {
 	return image
 }
 
-// listRemoteTags is a package-level var to allow test stubbing.
-var listRemoteTags = func(ctx context.Context, repo name.Repository) ([]string, error) {
+func defaultListRemoteTags(ctx context.Context, repo name.Repository) ([]string, error) {
 	return remote.List(repo,
 		remote.WithContext(ctx),
 		remote.WithAuthFromKeychain(authn.DefaultKeychain),
 	)
 }
-
-// resolveTagCreatedAt is a package-level var to allow test stubbing.
-var resolveTagCreatedAt = resolveCreatedAt
 
 func (f *finder) cachedTagNames(ctx context.Context, repo name.Repository) ([]string, error) {
 	key := repo.Name()
@@ -95,12 +91,11 @@ func (f *finder) cachedTagNames(ctx context.Context, repo name.Repository) ([]st
 		return slices.Clone(tagNames), nil
 	}
 
-	value, err, _ := f.tagNamesGroup.Do(key, func() (any, error) {
+	ch := f.tagNamesGroup.DoChan(key, func() (any, error) {
 		if tagNames, ok := f.tagNamesCache.Get(key); ok {
 			return tagNames, nil
 		}
-
-		tagNames, err := listRemoteTags(ctx, repo)
+		tagNames, err := f.listRemoteTags(context.Background(), repo)
 		if err != nil {
 			return nil, err
 		}
@@ -108,10 +103,16 @@ func (f *finder) cachedTagNames(ctx context.Context, repo name.Repository) ([]st
 		f.tagNamesCache.Add(key, tagNames)
 		return tagNames, nil
 	})
-	if err != nil {
-		return nil, err
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return slices.Clone(res.Val.([]string)), nil
 	}
-	return slices.Clone(value.([]string)), nil
 }
 
 func (f *finder) cachedCreatedAt(ctx context.Context, repo name.Repository, tagName, plOS, plArch string) (time.Time, error) {
@@ -120,22 +121,27 @@ func (f *finder) cachedCreatedAt(ctx context.Context, repo name.Repository, tagN
 		return createdAt, nil
 	}
 
-	value, err, _ := f.tagCreatedAtGroup.Do(key, func() (any, error) {
+	ch := f.tagCreatedAtGroup.DoChan(key, func() (any, error) {
 		if createdAt, ok := f.tagCreatedAtCache.Get(key); ok {
 			return createdAt, nil
 		}
-
-		createdAt, err := resolveTagCreatedAt(ctx, repo, tagName, plOS, plArch)
+		createdAt, err := f.resolveTagCreatedAt(context.Background(), repo, tagName, plOS, plArch)
 		if err != nil {
 			return time.Time{}, err
 		}
 		f.tagCreatedAtCache.Add(key, createdAt)
 		return createdAt, nil
 	})
-	if err != nil {
-		return time.Time{}, err
+
+	select {
+	case <-ctx.Done():
+		return time.Time{}, ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return time.Time{}, res.Err
+		}
+		return res.Val.(time.Time), nil
 	}
-	return value.(time.Time), nil
 }
 
 func resolveCreatedAt(ctx context.Context, repo name.Repository, tagName, plOS, plArch string) (time.Time, error) {

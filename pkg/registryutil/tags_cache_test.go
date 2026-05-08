@@ -10,13 +10,12 @@ import (
 )
 
 func TestCachedTagNames_ReusesResults(t *testing.T) {
-	f := NewFinder()
-	repo := mustRepository(t, "docker.io/library/ubuntu")
 	calls := 0
-	stubListRemoteTags(t, func(context.Context, name.Repository) ([]string, error) {
+	f := NewFinder(WithListRemoteTags(func(context.Context, name.Repository) ([]string, error) {
 		calls++
 		return []string{"noble", "jammy"}, nil
-	})
+	})).(*finder)
+	repo := mustRepository(t, "docker.io/library/ubuntu")
 
 	first, err := f.cachedTagNames(context.Background(), repo)
 	if err != nil {
@@ -37,16 +36,15 @@ func TestCachedTagNames_ReusesResults(t *testing.T) {
 }
 
 func TestCachedTagNames_DoesNotCacheErrors(t *testing.T) {
-	f := NewFinder()
-	repo := mustRepository(t, "docker.io/library/ubuntu")
 	calls := 0
-	stubListRemoteTags(t, func(context.Context, name.Repository) ([]string, error) {
+	f := NewFinder(WithListRemoteTags(func(context.Context, name.Repository) ([]string, error) {
 		calls++
 		if calls == 1 {
 			return nil, errors.New("registry unavailable")
 		}
 		return []string{"noble"}, nil
-	})
+	})).(*finder)
+	repo := mustRepository(t, "docker.io/library/ubuntu")
 
 	if _, err := f.cachedTagNames(context.Background(), repo); err == nil {
 		t.Fatal("expected first call to return loader error")
@@ -64,14 +62,13 @@ func TestCachedTagNames_DoesNotCacheErrors(t *testing.T) {
 }
 
 func TestCachedCreatedAt_ReusesResults(t *testing.T) {
-	f := NewFinder()
-	repo := mustRepository(t, "docker.io/library/ubuntu")
 	ts := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	calls := 0
-	stubResolveTagCreatedAt(t, func(_ context.Context, _ name.Repository, _, _, _ string) (time.Time, error) {
+	f := NewFinder(WithResolveTagCreatedAt(func(_ context.Context, _ name.Repository, _, _, _ string) (time.Time, error) {
 		calls++
 		return ts, nil
-	})
+	})).(*finder)
+	repo := mustRepository(t, "docker.io/library/ubuntu")
 
 	first, err := f.cachedCreatedAt(context.Background(), repo, "noble", "linux", "amd64")
 	if err != nil {
@@ -90,17 +87,16 @@ func TestCachedCreatedAt_ReusesResults(t *testing.T) {
 }
 
 func TestCachedCreatedAt_DoesNotCacheErrors(t *testing.T) {
-	f := NewFinder()
-	repo := mustRepository(t, "docker.io/library/ubuntu")
 	ts := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	calls := 0
-	stubResolveTagCreatedAt(t, func(_ context.Context, _ name.Repository, _, _, _ string) (time.Time, error) {
+	f := NewFinder(WithResolveTagCreatedAt(func(_ context.Context, _ name.Repository, _, _, _ string) (time.Time, error) {
 		calls++
 		if calls == 1 {
 			return time.Time{}, errors.New("registry unavailable")
 		}
 		return ts, nil
-	})
+	})).(*finder)
+	repo := mustRepository(t, "docker.io/library/ubuntu")
 
 	if _, err := f.cachedCreatedAt(context.Background(), repo, "noble", "linux", "amd64"); err == nil {
 		t.Fatal("expected first call to return resolver error")
@@ -115,26 +111,6 @@ func TestCachedCreatedAt_DoesNotCacheErrors(t *testing.T) {
 	if !got.Equal(ts) {
 		t.Fatalf("unexpected time: %v", got)
 	}
-}
-
-func stubListRemoteTags(t *testing.T, fn func(context.Context, name.Repository) ([]string, error)) {
-	t.Helper()
-
-	original := listRemoteTags
-	listRemoteTags = fn
-	t.Cleanup(func() {
-		listRemoteTags = original
-	})
-}
-
-func stubResolveTagCreatedAt(t *testing.T, fn func(context.Context, name.Repository, string, string, string) (time.Time, error)) {
-	t.Helper()
-
-	original := resolveTagCreatedAt
-	resolveTagCreatedAt = fn
-	t.Cleanup(func() {
-		resolveTagCreatedAt = original
-	})
 }
 
 func mustRepository(t *testing.T, ref string) name.Repository {
