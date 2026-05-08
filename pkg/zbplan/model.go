@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	claude "github.com/cloudwego/eino-ext/components/model/claude"
 	openai "github.com/cloudwego/eino-ext/components/model/openai"
@@ -113,14 +114,15 @@ func NewOpenAIModelFromEnv(ctx context.Context) (model.ToolCallingChatModel, err
 }
 
 // NewModelFromEnv reads the appropriate model configuration from the environment.
+// ZBPLAN_MODEL defaults to "claude" when unset.
 func NewModelFromEnv(ctx context.Context) (model.ToolCallingChatModel, error) {
-	modelType := os.Getenv("ZBPLAN_MODEL")
+	modelType := strings.ToLower(os.Getenv("ZBPLAN_MODEL"))
 	switch modelType {
-	case "claude":
+	case "", "claude":
 		return NewClaudeModelFromEnv(ctx)
 	case "openai":
 		return NewOpenAIModelFromEnv(ctx)
 	default:
-		return nil, fmt.Errorf("ZBPLAN_MODEL is not set or invalid")
+		return nil, fmt.Errorf("invalid ZBPLAN_MODEL %q (expected: claude|openai)", modelType)
 	}
 }
