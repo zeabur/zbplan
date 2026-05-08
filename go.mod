@@ -5,6 +5,7 @@ go 1.26.2
 require (
 	github.com/cloudwego/eino v0.8.13
 	github.com/cloudwego/eino-ext/components/model/claude v0.1.17
+	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
 	github.com/google/go-containerregistry v0.21.5
 	github.com/lithammer/fuzzysearch v1.1.8
 	github.com/moby/buildkit v0.29.0
@@ -48,6 +49,7 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.7 // indirect
+	github.com/cloudwego/eino-ext/libs/acl/openai v0.1.17 // indirect
 	github.com/containerd/console v1.0.5 // indirect
 	github.com/containerd/containerd/api v1.11.0 // indirect
 	github.com/containerd/containerd/v2 v2.3.0 // indirect
@@ -69,6 +71,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/eino-contrib/jsonschema v1.0.3 // indirect
+	github.com/evanphx/json-patch v0.5.2 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -92,6 +95,7 @@ require (
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
 	github.com/mailru/easyjson v0.9.2 // indirect
+	github.com/meguminnnnnnnnn/go-openai v0.1.2 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.2.0 // indirect

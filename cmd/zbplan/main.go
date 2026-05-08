@@ -40,7 +40,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	chatModel, err := zbplan.NewClaudeModelFromEnv(ctx)
+	chatModel, err := zbplan.NewModelFromEnv(ctx)
 	if err != nil {
 		slog.Error("failed to create chat model", "error", err)
 		os.Exit(1)
