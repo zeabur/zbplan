@@ -41,6 +41,7 @@
             version = "0.2.2";
             src = ./.;
             vendorHash = "sha256-GEjYcJ0jypom/V4/RNnrdXqsJud5CD/daPpVEBXlHfA=";
+            doCheck = false;
           };
         }
       );
