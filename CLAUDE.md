@@ -4,7 +4,7 @@
 
 This project uses Nix. All Go commands must run inside the dev shell:
 
-```
+```sh
 nix develop --command go test ./...
 nix develop --command go build ./...
 ```
@@ -13,10 +13,27 @@ nix develop --command go build ./...
 
 Always run lint and formatter before committing:
 
-```
+```sh
 nix develop --command golangci-lint fmt
 nix develop --command golangci-lint run ./...
 ```
+
+## Update workflow
+
+When refreshing dependencies and tooling, run the update steps inside the Nix development shell where applicable:
+
+```sh
+nix develop --command nix flake update
+nix develop --command sh -c 'go get -u ./... && go mod tidy'
+```
+
+Then update GitHub Actions workflows (`pnpm` is not in the devShell; use `nix shell` to provide it ad-hoc):
+
+```sh
+nix shell nixpkgs#pnpm --command pnpx actions-up --include-branches -y
+```
+
+Also update the package `version` in `flake.nix` to the next version after the latest Git tag. For example, if the latest tag is `v0.2.2`, set the `flake.nix` version to `0.2.3` unless the release requires a minor or major bump.
 
 ## Coding guidelines
 
@@ -38,13 +55,13 @@ Follow the interface + unexported struct pattern (see `lib/registryutil/registry
 
 Dockerfile template build tests live in `internal/plantools/` under the `integration` build tag. They require Docker to be running and spin up a BuildKit container via testcontainers.
 
-```
+```sh
 nix develop --command go test -tags=integration -timeout=30m -count=1 ./internal/plantools/
 ```
 
 Add `-v` to get full BuildKit logs on failure:
 
-```
+```sh
 nix develop --command go test -tags=integration -timeout=30m -count=1 -v ./internal/plantools/
 ```
 
