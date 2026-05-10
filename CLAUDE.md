@@ -18,6 +18,18 @@ nix develop --command golangci-lint fmt
 nix develop --command golangci-lint run ./...
 ```
 
+## Update workflow
+
+When refreshing dependencies and tooling, run the update steps inside the Nix development shell where applicable:
+
+```
+nix develop --command nix flake update
+nix develop --command sh -c 'go get -u ./... && go mod tidy'
+nix develop --command pnpx actions-up --include-branches -y
+```
+
+Also update the package `version` in `flake.nix` to the next version after the latest Git tag. For example, if the latest tag is `v0.2.2`, set the `flake.nix` version to `0.2.3` unless the release requires a minor or major bump.
+
 ## Coding guidelines
 
 ### Mockable design
