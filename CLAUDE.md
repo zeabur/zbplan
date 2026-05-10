@@ -4,7 +4,7 @@
 
 This project uses Nix. All Go commands must run inside the dev shell:
 
-```
+```sh
 nix develop --command go test ./...
 nix develop --command go build ./...
 ```
@@ -13,7 +13,7 @@ nix develop --command go build ./...
 
 Always run lint and formatter before committing:
 
-```
+```sh
 nix develop --command golangci-lint fmt
 nix develop --command golangci-lint run ./...
 ```
@@ -22,7 +22,7 @@ nix develop --command golangci-lint run ./...
 
 When refreshing dependencies and tooling, run the update steps inside the Nix development shell where applicable:
 
-```
+```sh
 nix develop --command nix flake update
 nix develop --command sh -c 'go get -u ./... && go mod tidy'
 nix develop --command pnpx actions-up --include-branches -y
@@ -50,13 +50,13 @@ Follow the interface + unexported struct pattern (see `lib/registryutil/registry
 
 Dockerfile template build tests live in `internal/plantools/` under the `integration` build tag. They require Docker to be running and spin up a BuildKit container via testcontainers.
 
-```
+```sh
 nix develop --command go test -tags=integration -timeout=30m -count=1 ./internal/plantools/
 ```
 
 Add `-v` to get full BuildKit logs on failure:
 
-```
+```sh
 nix develop --command go test -tags=integration -timeout=30m -count=1 -v ./internal/plantools/
 ```
 
