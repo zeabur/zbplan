@@ -35,6 +35,17 @@ nix shell nixpkgs#pnpm --command pnpx actions-up --include-branches -y
 
 Also update the package `version` in `flake.nix` to the next version after the latest Git tag. For example, if the latest tag is `v0.2.2`, set the `flake.nix` version to `0.2.3` unless the release requires a minor or major bump.
 
+Then verify the package build:
+
+```sh
+nix develop --command nix build .
+```
+
+If `nix build .` fails because `vendorHash` changed:
+
+- Copy the `got:` hash from the Nix error into `vendorHash` in `flake.nix`
+- Rerun `nix develop --command nix build .` and keep iterating until the build succeeds
+
 ## Coding guidelines
 
 ### Mockable design

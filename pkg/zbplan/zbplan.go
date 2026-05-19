@@ -18,18 +18,17 @@ import (
 
 // Config controls a single Run invocation.
 type Config struct {
-	// Required fields.
-
 	// Model is the eino tool-calling model that drives the planning agent.
 	// Use NewClaudeModel or NewClaudeModelFromEnv for a Claude-backed model.
 	Model model.ToolCallingChatModel
-	// BuildKitAddr is the BuildKit daemon endpoint
+
+	// BuildKitAddr is the optional BuildKit daemon endpoint
 	// (e.g. "tcp://host:1234" or "docker-container://buildkitd").
+	// When empty, BuildKit's client falls back to the system default address.
 	BuildKitAddr string
+
 	// ContextDir is the source-code directory to plan for.
 	ContextDir string
-
-	// Optional fields.
 
 	// Variables are injected as ZEABUR_ENV_* build args into every FROM stage.
 	Variables map[string]string
@@ -83,9 +82,6 @@ type Result struct {
 func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if cfg.Model == nil {
 		return nil, fmt.Errorf("zbplan: Model is required")
-	}
-	if cfg.BuildKitAddr == "" {
-		return nil, fmt.Errorf("zbplan: BuildKitAddr is required")
 	}
 	if cfg.ContextDir == "" {
 		return nil, fmt.Errorf("zbplan: ContextDir is required")

@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	buildkitAddr   = flag.String("buildkit-addr", "", "the address of the buildkit server")
+	buildkitAddr   = flag.String("buildkit-addr", "", "optional: the address of the buildkit server")
 	contextDir     = flag.String("context-dir", "", "the directory to use as the build context")
 	dockerfilePath = flag.String("dockerfile", "", "optional: path to an existing Dockerfile to try first")
 	ociOut         = flag.String("oci-out", "", "optional: write OCI image tarball to this path")
@@ -33,10 +33,6 @@ func main() {
 
 	if *contextDir == "" {
 		slog.Error("context-dir is required")
-		os.Exit(1)
-	}
-	if *buildkitAddr == "" {
-		slog.Error("buildkit-addr is required")
 		os.Exit(1)
 	}
 
