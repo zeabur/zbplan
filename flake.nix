@@ -38,9 +38,9 @@
         {
           default = pkgs.buildGoModule {
             pname = "zbplan";
-            version = "0.2.2";
+            version = "0.2.3";
             src = ./.;
-            vendorHash = "sha256-GEjYcJ0jypom/V4/RNnrdXqsJud5CD/daPpVEBXlHfA=";
+            vendorHash = "sha256-hWFC0UWMc2jftxhAE4aKdgb59PzitACEREDCXRm/Huo=";
             doCheck = false;
           };
         }
