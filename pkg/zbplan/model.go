@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/anthropics/anthropic-sdk-go"
 	claude "github.com/cloudwego/eino-ext/components/model/claude"
 	openai "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
@@ -41,7 +42,7 @@ type OpenAIConfig struct {
 // NewClaudeModel returns a Claude tool-calling model from the given config.
 func NewClaudeModel(ctx context.Context, cfg ClaudeConfig) (model.ToolCallingChatModel, error) {
 	if cfg.Model == "" {
-		cfg.Model = "claude-sonnet-4-6"
+		cfg.Model = "claude-sonnet-5"
 	}
 	if cfg.MaxTokens == 0 {
 		cfg.MaxTokens = 16000
@@ -53,11 +54,10 @@ func NewClaudeModel(ctx context.Context, cfg ClaudeConfig) (model.ToolCallingCha
 		MaxTokens: cfg.MaxTokens,
 	}
 	if !cfg.DisableThinking {
-		// eino-ext only exposes budget_tokens thinking; inject adaptive thinking
-		// via AdditionalRequestFields so it is set at the JSON level instead.
-		c.AdditionalRequestFields = map[string]any{
-			"thinking": map[string]any{"type": "adaptive"},
-			"effort":   "high",
+		c.ThinkingConfig = &anthropic.ThinkingConfigParamUnion{
+			OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{
+				Display: anthropic.ThinkingConfigAdaptiveDisplayOmitted,
+			},
 		}
 	}
 	if cfg.BaseURL != "" {
@@ -69,7 +69,7 @@ func NewClaudeModel(ctx context.Context, cfg ClaudeConfig) (model.ToolCallingCha
 // NewOpenAIModel returns an OpenAI tool-calling model from the given config.
 func NewOpenAIModel(ctx context.Context, cfg OpenAIConfig) (model.ToolCallingChatModel, error) {
 	if cfg.Model == "" {
-		cfg.Model = "gpt-5.5"
+		cfg.Model = "gpt-5.6-terra"
 	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = "https://api.openai.com/v1"
