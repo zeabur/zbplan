@@ -3,12 +3,12 @@ set -euo pipefail
 
 # Run from this module, or pass additional package import paths in a Go workspace.
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-cd "$repo_dir"
+cd "${BUILD_ENV_TEST_MODULE_DIR:-$repo_dir}"
 docker info >/dev/null
 test_container="zeabur-build-env-${RANDOM}-$$"
 cleanup() { docker rm -f "$test_container" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
-docker run --detach --privileged --name "$test_container" \
+docker run --detach --privileged --entrypoint buildkitd --name "$test_container" \
   "${BUILD_ENV_TEST_BUILDKIT_IMAGE:-moby/buildkit@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec}" >/dev/null
 ready=false
 for ((attempt = 0; attempt < 100; attempt++)); do
