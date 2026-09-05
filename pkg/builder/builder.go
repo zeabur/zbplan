@@ -5,14 +5,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"os"
 	"path"
-	"slices"
 
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/tonistiigi/fsutil"
+	"github.com/zeabur/zbplan/pkg/buildenv"
 	"golang.org/x/sync/errgroup"
 
 	_ "github.com/moby/buildkit/client/connhelper/dockercontainer"
@@ -42,14 +41,8 @@ func NewBuildkitBuilder(buildkitClient *client.Client, logger *slog.Logger) *bui
 }
 
 func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports []client.ExportEntry) error {
-	processor := NewPipelineProcessor()
-	if len(options.Variables) > 0 {
-		keys := slices.Sorted(maps.Keys(options.Variables))
-		processor.Processors = append(processor.Processors, &EnvProcessor{Variables: keys})
-	}
-
-	b.logger.InfoContext(ctx, "🔧 Pre-processing Dockerfile...")
-	dockerfile, err := processor.Process(ctx, options.Dockerfile)
+	b.logger.InfoContext(ctx, "preparing build environment")
+	prepared, err := buildenv.Prepare(ctx, options.Dockerfile, options.Variables)
 	if err != nil {
 		b.logger.ErrorContext(ctx, "Failed to pre-process dockerfile", slog.Any("error", err))
 		return fmt.Errorf("pre-process dockerfile: %w", err)
@@ -71,7 +64,7 @@ func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports 
 	}
 
 	b.logger.InfoContext(ctx, "🐳 Writing Dockerfile...")
-	if err = os.WriteFile(path.Join(tempDir, "Dockerfile"), []byte(dockerfile), 0o644); err != nil {
+	if err = os.WriteFile(path.Join(tempDir, "Dockerfile"), []byte(prepared.Dockerfile), 0o644); err != nil {
 		b.logger.ErrorContext(ctx, "Failed to write dockerfile", slog.Any("error", err))
 		return fmt.Errorf("write dockerfile: %w", err)
 	}
@@ -82,19 +75,14 @@ func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports 
 		return fmt.Errorf("create dockerfile filesystem: %w", err)
 	}
 
-	frontendAttrs := make(map[string]string, len(options.Variables)+1)
-	frontendAttrs["filename"] = "Dockerfile"
-	for k, v := range options.Variables {
-		frontendAttrs["build-arg:ZEABUR_ENV_"+EncodeArgName(k)] = v
-	}
-
 	solveOpt := client.SolveOpt{
 		LocalMounts: map[string]fsutil.FS{
 			"context":    contextFS,
 			"dockerfile": dockerfileFS,
 		},
 		Frontend:      "dockerfile.v0",
-		FrontendAttrs: frontendAttrs,
+		FrontendAttrs: prepared.FrontendAttrs(),
+		Session:       prepared.Session,
 		Exports:       exports,
 	}
 

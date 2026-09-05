@@ -100,7 +100,7 @@ flowchart TD
 
     F --> G[Agent outputs raw Dockerfile]
     G --> H[Extract Dockerfile content]
-    H --> I[Inject ZEABUR_ENV_* build args / env vars]
+    H --> I[Mount build variables as RUN secrets]
     I --> J[BuildKit build]
 
     J -->|success| K[Output Dockerfile]
@@ -130,7 +130,29 @@ nix develop --command go run ./cmd/zbplan \
   --context-dir /path/to/project
 ```
 
-Use `--variables KEY=value` to pass environment variables. They are injected after each `FROM` statement in the Dockerfile as `ARG ZEABUR_ENV_*` and a corresponding `ENV`.
+Use `--variables KEY=value` to pass build-time variables. `RUN` receives them
+through BuildKit secret environment mounts, without adding runtime image `ENV`
+defaults. Dockerfile `ENV` assignments still override a build input for subsequent
+instructions in that stage. Supply runtime variables separately when starting the
+container.
+
+Explicit references in Dockerfile configuration (such as `WORKDIR $APP_DIR` or
+`ENV MODE=$BUILD_MODE`) remain public build arguments and may appear in metadata.
+Keep credentials in `RUN`; neither secret mounts nor the builder can prevent a
+build command from deliberately printing or copying credentials into artifacts.
+Secret environment mounts require Dockerfile frontend 1.10+. Older stable
+`docker/dockerfile:1.x` directives use the worker's bundled frontend without
+changing the original source. Custom and labs frontends must support secret-env
+mounts themselves.
+
+The shared `pkg/buildenv` implementation uses a process-keyed digest in secret IDs
+so changed inputs invalidate cache without exposing their values or unkeyed
+hashes. Repeated builds in one process retain cache reuse; new processes use a
+new namespace.
+
+Run the local security/runtime/cache integration checks with
+`scripts/test-build-env.sh`. They use dummy credentials and a local HTTP server,
+start an isolated pinned BuildKit container, and remove that container afterward.
 
 ## Development
 
