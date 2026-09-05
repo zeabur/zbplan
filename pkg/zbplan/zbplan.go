@@ -30,7 +30,9 @@ type Config struct {
 	// ContextDir is the source-code directory to plan for.
 	ContextDir string
 
-	// Variables are injected as ZEABUR_ENV_* build args into every FROM stage.
+	// Variables are build-time inputs supplied to RUN via secret environment mounts.
+	// They do not become image runtime defaults. Explicit Dockerfile metadata
+	// references are public parameters; see package buildenv.
 	Variables map[string]string
 	// UserDockerfile is an existing Dockerfile to try before invoking the agent.
 	// If it builds successfully the agent is skipped entirely.
