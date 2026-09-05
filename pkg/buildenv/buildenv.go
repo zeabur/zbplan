@@ -67,6 +67,7 @@ type variables map[string]string
 type expression struct {
 	source, alias, value string
 	references           map[string]struct{}
+	unquoted             bool
 }
 
 func (v variables) Get(key string) (string, bool) { value, ok := v[key]; return value, ok }
@@ -131,7 +132,13 @@ func Prepare(ctx context.Context, dockerfile string, values map[string]string) (
 			}
 			if !isRun && !lexer.SkipProcessQuotes && len(match.Matched) > 0 && len(match.Unmatched) == 0 && strings.Contains(header, needle) {
 				hash := sha256.Sum256([]byte(word))
-				expressions = append(expressions, expression{needle, "ZEABUR_DOCKERFILE_EXPR_" + hex.EncodeToString(hash[:]), match.Result, match.Matched})
+				expr := expression{source: needle, alias: "ZEABUR_DOCKERFILE_EXPR_" + hex.EncodeToString(hash[:]), value: match.Result, references: match.Matched}
+				// EXPOSE uses ProcessWords, not ProcessWord. Keep unquoted
+				// multi-port expansion; quoted whitespace must stay invalid.
+				if _, ok := command.(*instructions.ExposeCommand); ok && len(match.Words) > 1 {
+					expr.unquoted = !slices.ContainsFunc(match.Words, func(word string) bool { return strings.ContainsAny(word, " \t\r\n") })
+				}
+				expressions = append(expressions, expr)
 				return word, nil
 			}
 			for key := range match.Matched {
@@ -301,7 +308,13 @@ func materializeExpressions(source string, expressions []expression, escape rune
 			}
 		}
 		if match != nil {
-			out.WriteString("\"${" + match.alias + "}\"")
+			if !match.unquoted {
+				out.WriteByte('"')
+			}
+			out.WriteString("${" + match.alias + "}")
+			if !match.unquoted {
+				out.WriteByte('"')
+			}
 			used[match.alias] = true
 			i += len(match.source)
 			continue

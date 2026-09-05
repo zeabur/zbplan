@@ -265,3 +265,45 @@ func TestContinuedMountDoesNotRewriteShellReferences(t *testing.T) {
 		t.Fatalf("continued mount: %v\n%s", err, p.Dockerfile)
 	}
 }
+
+func TestExposeRetainsWordSplitting(t *testing.T) {
+	for _, test := range []struct {
+		name, instruction, ports string
+		want                     []string
+		wantError                bool
+	}{
+		{"multiple", "EXPOSE $PORTS", "80 443", []string{"80/tcp", "443/tcp"}, false},
+		{"empty", "EXPOSE $PORTS", "", nil, false},
+		{"quoted", `EXPOSE "$PORTS"`, "80 443", nil, true},
+		{"predicate", "EXPOSE ${TOKEN:+$PORTS}", "80 443", []string{"80/tcp", "443/tcp"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			p, err := Prepare(t.Context(), "FROM scratch\n"+test.instruction+"\n", map[string]string{"PORTS": test.ports, "TOKEN": "FAKE_EXPOSE_PREDICATE_SECRET"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := dockerfile2llb.Dockerfile2LLB(t.Context(), []byte(p.Dockerfile), dockerfile2llb.ConvertOpt{Config: dockerui.Config{BuildArgs: p.BuildArgs}})
+			if test.wantError {
+				if err == nil {
+					t.Fatal("quoted multiple ports must remain invalid")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("EXPOSE semantics changed: %v", err)
+			}
+			if len(result.Image.Config.ExposedPorts) != len(test.want) {
+				t.Fatal("EXPOSE port count changed")
+			}
+			for _, port := range test.want {
+				if _, ok := result.Image.Config.ExposedPorts[port]; !ok {
+					t.Fatalf("missing port %s", port)
+				}
+			}
+			metadata, _ := json.Marshal(result.Image)
+			if strings.Contains(string(metadata), "FAKE_EXPOSE_PREDICATE_SECRET") {
+				t.Fatal("EXPOSE predicate leaked its private input")
+			}
+		})
+	}
+}
