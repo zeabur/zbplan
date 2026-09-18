@@ -114,7 +114,7 @@ flowchart TD
 ## Key Components
 
 - `cmd/zbplan`: CLI entrypoint. Creates the configured ReAct agent and applies explicit model, tool, build, concurrency, and wall-clock budgets.
-- `pkg/zbplan`: Agent orchestration and context budgeting. Individual model-visible tool results and BuildKit retry logs are capped at 12 KiB; full tool results are retained only within a byte-capped store, and older tool rounds become retrievable references.
+- `pkg/zbplan`: Agent orchestration and context budgeting. Individual model-visible tool results and BuildKit retry logs are capped at 12 KiB; full tool results are retained only within a byte-capped store, and only previously truncated results are compacted in older tool rounds.
 - `internal/plantools`: Bounded tools exposed to the agent — project file inspection, Dockerfile template fuzzy search, allowlisted registry image/tag search, and a BuildKit client wrapper.
 - `internal/plantools/dockerfiles`: Built-in Dockerfile templates, currently covering Bun, Deno, FastAPI, Go, Java Gradle, Java Maven, Next.js, Node npm, Node pnpm, Nuxt server, Nuxt static, PHP, Python pip, Python uv, Ruby, Rust, and Static.
 - `pkg/registryutil`: Searches Docker Hub / GHCR images and uses fuzzy search to pick tags matching the required version.
@@ -131,11 +131,19 @@ nix develop --command go run ./cmd/zbplan \
   --context-dir /path/to/project
 ```
 
-Dockerfile `RUN` networking is disabled by default. Builds whose `RUN` steps must download dependencies require the explicit `--allow-build-network` flag; only enable it for repositories you trust. Runtime secrets and environment variables are intentionally not passed into generated builds.
+Dockerfile `RUN` networking is disabled by default. Builds whose `RUN` steps must download dependencies require the explicit `--allow-build-network` flag; only enable it for repositories you trust. The CLI and `pkg/zbplan` intentionally do not pass runtime secrets or environment variables into generated builds.
 
 Host-enforced limits have secure defaults. Use `--max-build-attempts`, `--max-agent-steps`, `--max-model-requests`, `--max-tool-calls`, `--max-parallel-tool-calls`, `--max-retained-tool-output-bytes`, `--max-build-log-bytes`, `--run-timeout`, `--tool-timeout`, and `--build-timeout` to tighten them.
 
 Defaults: 3 build attempts, 16 agent steps per generation, 24 model requests, 24 tool calls, 4 concurrent tool calls, a 15-minute run, 30 seconds per tool, 10 minutes per build, 1 MiB of retained tool data, and 128 KiB of build logs per attempt.
+
+Direct `pkg/builder` callers may supply trusted build-time values through `BuildImageOptions.Variables`. `RUN` receives them through BuildKit secret environment mounts, without adding runtime image `ENV` defaults. Dockerfile `ENV` assignments still override a build input for subsequent instructions in that stage. Supply runtime variables separately when starting the container.
+
+Explicit references in Dockerfile configuration (such as `WORKDIR $APP_DIR` or `ENV MODE=$BUILD_MODE`) remain public build arguments and may appear in metadata. Keep credentials in `RUN`; neither secret mounts nor the builder can prevent a build command from deliberately printing or copying credentials into artifacts.
+
+The shared `pkg/buildenv` implementation uses a process-keyed digest in secret IDs so changed inputs invalidate cache without exposing their values or unkeyed hashes. Repeated builds in one process retain cache reuse; new processes use a new namespace.
+
+Run the local security/runtime/cache integration checks with `scripts/test-build-env.sh`. They use dummy credentials and a local HTTP server, start an isolated pinned BuildKit container, and remove that container afterward.
 
 ## Development
 

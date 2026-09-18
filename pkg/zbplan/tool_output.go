@@ -29,13 +29,14 @@ type storedToolOutput struct {
 }
 
 type toolOutputStore struct {
-	mu         sync.RWMutex
-	nextRef    uint64
-	maxBytes   int
-	totalBytes int
-	outputs    map[string]storedToolOutput
-	callRefs   map[string]string
-	order      []string
+	mu               sync.RWMutex
+	nextRef          uint64
+	maxBytes         int
+	totalBytes       int
+	outputs          map[string]storedToolOutput
+	callRefs         map[string]string
+	compactableCalls map[string]struct{}
+	order            []string
 }
 
 func newToolOutputStore(maxBytes ...int) *toolOutputStore {
@@ -44,9 +45,10 @@ func newToolOutputStore(maxBytes ...int) *toolOutputStore {
 		limit = maxBytes[0]
 	}
 	return &toolOutputStore{
-		maxBytes: limit,
-		outputs:  make(map[string]storedToolOutput),
-		callRefs: make(map[string]string),
+		maxBytes:         limit,
+		outputs:          make(map[string]storedToolOutput),
+		callRefs:         make(map[string]string),
+		compactableCalls: make(map[string]struct{}),
 	}
 }
 
@@ -57,6 +59,13 @@ func (s *toolOutputStore) save(callID, output string) string {
 func (s *toolOutputStore) saveCall(callID, toolName, args, output string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if callID != "" {
+		if len(output) > defaultMaxToolOutputBytes {
+			s.compactableCalls[callID] = struct{}{}
+		} else {
+			delete(s.compactableCalls, callID)
+		}
+	}
 
 	s.nextRef++
 	ref := fmt.Sprintf("out-%d", s.nextRef)
@@ -91,16 +100,19 @@ func (s *toolOutputStore) refForCall(callID string) (string, bool) {
 	return ref, ok
 }
 
-func (s *toolOutputStore) compactableRefForCall(callID string) (string, bool) {
+func (s *toolOutputStore) compactionForCall(callID string) (ref string, compactable, retained bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	ref, ok := s.callRefs[callID]
-	if !ok {
-		return "", false
+	if _, compactable = s.compactableCalls[callID]; !compactable {
+		return "", false, false
 	}
-	output, ok := s.outputs[ref]
-	return ref, ok && len(output.value) > defaultMaxToolOutputBytes
+	ref, retained = s.callRefs[callID]
+	if !retained {
+		return "", true, false
+	}
+	_, retained = s.outputs[ref]
+	return ref, true, retained
 }
 
 func (s *toolOutputStore) get(ref string) (string, bool) {
@@ -211,14 +223,18 @@ func newToolHistoryRewriter(store *toolOutputStore) react.MessageModifier {
 		}
 
 		for _, message := range messages[:latestToolRound] {
-			if message.Role != schema.Tool || strings.HasPrefix(message.Content, "[Earlier tool output compacted.") {
+			if message.Role != schema.Tool || strings.HasPrefix(message.Content, "[Earlier tool output ") {
 				continue
 			}
-			ref, ok := store.compactableRefForCall(message.ToolCallID)
-			if !ok {
+			ref, compactable, retained := store.compactionForCall(message.ToolCallID)
+			if !compactable {
 				continue
 			}
-			message.Content = fmt.Sprintf("[Earlier tool output compacted. Use read_tool_output with ref %q if it is needed again.]", ref)
+			if retained {
+				message.Content = fmt.Sprintf("[Earlier tool output compacted. Use read_tool_output with ref %q if it is needed again.]", ref)
+			} else {
+				message.Content = "[Earlier tool output discarded after its retention budget was exhausted.]"
+			}
 			message.MultiContent = nil
 			message.UserInputMultiContent = nil
 		}

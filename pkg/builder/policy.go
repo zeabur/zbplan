@@ -34,8 +34,8 @@ func validateBuildPolicy(dockerfile, networkMode string) (string, error) {
 		if !strings.HasPrefix(directive, "#") {
 			continue
 		}
-		name, _, ok := strings.Cut(strings.TrimSpace(strings.TrimPrefix(directive, "#")), "=")
-		if ok && strings.EqualFold(strings.TrimSpace(name), "syntax") {
+		name, value, ok := strings.Cut(strings.TrimSpace(strings.TrimPrefix(directive, "#")), "=")
+		if ok && strings.EqualFold(strings.TrimSpace(name), "syntax") && !allowedDockerfileFrontend(value) {
 			return "", fmt.Errorf("custom Dockerfile syntax frontends are not allowed")
 		}
 	}
@@ -47,41 +47,71 @@ func validateBuildPolicy(dockerfile, networkMode string) (string, error) {
 	if len(parsed.AST.Children) == 0 {
 		return "", fmt.Errorf("dockerfile has no instructions")
 	}
-	if len(parsed.AST.Children) > maxDockerfileInstructions {
-		return "", fmt.Errorf("dockerfile has %d instructions; maximum is %d", len(parsed.AST.Children), maxDockerfileInstructions)
-	}
+	instructionCount := 0
 
 	for _, instruction := range parsed.AST.Children {
-		switch strings.ToLower(instruction.Value) {
-		case "add":
-			return "", fmt.Errorf("ADD is not allowed at line %d; use COPY for local build-context files", instruction.StartLine)
-		case "from":
-			if instruction.Next == nil {
-				return "", fmt.Errorf("FROM has no image at line %d", instruction.StartLine)
-			}
-			if err := validateImageReference(instruction.Next.Value); err != nil {
-				return "", fmt.Errorf("FROM image at line %d: %w", instruction.StartLine, err)
-			}
-		case "copy":
-			for _, flag := range instruction.Flags {
-				flag = strings.TrimPrefix(strings.ToLower(flag), "--")
-				if source, ok := strings.CutPrefix(flag, "from="); ok {
-					if err := validateImageReference(source); err != nil {
-						return "", fmt.Errorf("COPY --from at line %d: %w", instruction.StartLine, err)
-					}
-				}
-			}
-		case "run":
-			for _, flag := range instruction.Flags {
-				flag = strings.TrimPrefix(strings.ToLower(flag), "--")
-				if flag == "network=host" || flag == "security=insecure" {
-					return "", fmt.Errorf("RUN --%s is not allowed at line %d", flag, instruction.StartLine)
-				}
-			}
+		if err := validateDockerfileInstruction(instruction, &instructionCount); err != nil {
+			return "", err
 		}
 	}
 
 	return networkMode, nil
+}
+
+func validateDockerfileInstruction(instruction *parser.Node, count *int) error {
+	*count++
+	if *count > maxDockerfileInstructions {
+		return fmt.Errorf("dockerfile has more than %d instructions", maxDockerfileInstructions)
+	}
+
+	switch strings.ToLower(instruction.Value) {
+	case "add":
+		return fmt.Errorf("ADD is not allowed at line %d; use COPY for local build-context files", instruction.StartLine)
+	case "from":
+		if instruction.Next == nil {
+			return fmt.Errorf("FROM has no image at line %d", instruction.StartLine)
+		}
+		if err := validateImageReference(instruction.Next.Value); err != nil {
+			return fmt.Errorf("FROM image at line %d: %w", instruction.StartLine, err)
+		}
+	case "copy":
+		for _, flag := range instruction.Flags {
+			flag = strings.TrimPrefix(strings.ToLower(flag), "--")
+			if source, ok := strings.CutPrefix(flag, "from="); ok {
+				if err := validateImageReference(source); err != nil {
+					return fmt.Errorf("COPY --from at line %d: %w", instruction.StartLine, err)
+				}
+			}
+		}
+	case "run":
+		for _, flag := range instruction.Flags {
+			flag = strings.TrimPrefix(strings.ToLower(flag), "--")
+			if flag == "network=host" || flag == "security=insecure" {
+				return fmt.Errorf("RUN --%s is not allowed at line %d", flag, instruction.StartLine)
+			}
+		}
+	}
+	for _, child := range instruction.Children {
+		if err := validateDockerfileInstruction(child, count); err != nil {
+			return err
+		}
+	}
+	for argument := instruction.Next; argument != nil; argument = argument.Next {
+		for _, child := range argument.Children {
+			if err := validateDockerfileInstruction(child, count); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func allowedDockerfileFrontend(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return strings.HasPrefix(value, "docker/dockerfile:") ||
+		strings.HasPrefix(value, "docker/dockerfile@sha256:") ||
+		strings.HasPrefix(value, "docker.io/docker/dockerfile:") ||
+		strings.HasPrefix(value, "docker.io/docker/dockerfile@sha256:")
 }
 
 func validateImageReference(image string) error {

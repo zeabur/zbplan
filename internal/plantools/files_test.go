@@ -78,6 +78,20 @@ func TestReadToolRejectsSymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestReadToolRejectsSensitiveSymlinkTarget(t *testing.T) {
+	baseDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(baseDir, ".env"), []byte("TOKEN=secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(".env", filepath.Join(baseDir, "config.txt")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	if _, err := NewReadTool(baseDir).InvokableRun(context.Background(), `{"path":"config.txt"}`); err == nil {
+		t.Fatal("expected sensitive symlink target rejection")
+	}
+}
+
 func TestReadToolRejectsNegativeLimitAndSensitiveFiles(t *testing.T) {
 	baseDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(baseDir, "README.md"), []byte("hello\n"), 0o644); err != nil {

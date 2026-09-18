@@ -168,6 +168,7 @@ func secureExistingToolPath(baseDir, path string) (string, string, error) {
 	if err != nil {
 		return "", "", fmt.Errorf("resolve base directory: %w", err)
 	}
+
 	realPath, err := filepath.EvalSymlinks(absPath)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve path: %w", err)
@@ -176,6 +177,29 @@ func secureExistingToolPath(baseDir, path string) (string, string, error) {
 		return "", "", errPathEscapesBase
 	}
 	return rel, realPath, nil
+}
+
+func unavailableExistingToolPath(baseDir, requestedRel, resolvedAbs string, isDir bool) (bool, error) {
+	shouldIgnore := buildShouldIgnore(baseDir)
+	requestedRel = filepath.ToSlash(requestedRel)
+	if isSensitiveToolPath(requestedRel) || shouldIgnore(requestedRel, isDir) {
+		return true, nil
+	}
+
+	absBase, err := filepath.Abs(baseDir)
+	if err != nil {
+		return false, fmt.Errorf("resolve base directory: %w", err)
+	}
+	realBase, err := filepath.EvalSymlinks(absBase)
+	if err != nil {
+		return false, fmt.Errorf("resolve base directory: %w", err)
+	}
+	resolvedRel, err := filepath.Rel(realBase, resolvedAbs)
+	if err != nil || !isPathInBase(realBase, resolvedAbs) {
+		return false, errPathEscapesBase
+	}
+	resolvedRel = filepath.ToSlash(resolvedRel)
+	return isSensitiveToolPath(resolvedRel) || shouldIgnore(resolvedRel, isDir), nil
 }
 
 func globWalkRoot(absBase, pattern string) string {
@@ -566,14 +590,18 @@ func (t *readTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 	if err != nil {
 		return "", fmt.Errorf("stat path: %w", err)
 	}
+	unavailable, err := unavailableExistingToolPath(t.baseDir, relPath, absPath, info.IsDir())
+	if err != nil {
+		return "", err
+	}
+	if unavailable {
+		return "", fmt.Errorf("path is unavailable because it is ignored or sensitive")
+	}
 	if info.IsDir() {
 		return listDirectory(ctx, t.baseDir, relPath, absPath, maxListEntries)
 	}
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("path is not a regular file")
-	}
-	if isSensitiveToolPath(relPath) || buildShouldIgnore(t.baseDir)(relPath, false) {
-		return "", fmt.Errorf("path is unavailable because it is ignored or sensitive")
 	}
 	if info.Size() > maxReadableFileBytes {
 		return "", fmt.Errorf("file is %d bytes; maximum readable size is %d", info.Size(), maxReadableFileBytes)

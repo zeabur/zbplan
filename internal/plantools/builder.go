@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/moby/buildkit/client"
@@ -27,6 +28,7 @@ type BuilderClient struct {
 	timeout     time.Duration
 	maxLogBytes int
 	client      *client.Client
+	solveCount  atomic.Int64
 }
 
 // NewBuilderClient dials BuildKit and returns a BuilderClient ready for builds.
@@ -49,6 +51,11 @@ func (b *BuilderClient) Close() error {
 	return b.client.Close()
 }
 
+// BuildSolves returns the number of BuildKit Solve RPCs started by this client.
+func (b *BuilderClient) BuildSolves() int {
+	return int(b.solveCount.Load())
+}
+
 // RunBuild builds the Dockerfile once. When ociOutput is non-nil, the same
 // solve exports the OCI artifact. BuildKit closes ociOutput during solve
 // finalization.
@@ -65,7 +72,7 @@ func (b *BuilderClient) RunBuild(ctx context.Context, dockerfile string, ociOutp
 		slog.NewTextHandler(logBuf, nil),
 	))
 
-	bld := builder.NewBuildkitBuilder(b.client, logger)
+	bld := builder.NewBuildkitBuilder(b.client, logger, func() { b.solveCount.Add(1) })
 	options := builder.BuildImageOptions{
 		Dockerfile:  dockerfile,
 		Context:     b.contextDir,
@@ -77,6 +84,7 @@ func (b *BuilderClient) RunBuild(ctx context.Context, dockerfile string, ociOutp
 		err = bld.BuildOCI(ctx, options, ociOutput)
 	}
 	if err != nil {
+		_, _ = fmt.Fprintf(logBuf, "\nbuild error: %v\n", err)
 		return logBuf.String(), fmt.Errorf("build failed: %w", err)
 	}
 	return "", nil

@@ -127,12 +127,11 @@ func Run(ctx context.Context, cfg Config) (result *Result, err error) {
 	outputStore := newToolOutputStore(limits.MaxRetainedToolOutputBytes)
 	budgetedModel := newBudgetedModel(cfg.Model, limits.MaxModelRequests)
 	toolsBudget := newToolBudget(limits.MaxToolCalls, limits.MaxParallelToolCalls, limits.ToolTimeout)
-	buildSolves := 0
 	stats := func() RunStats {
 		return RunStats{
 			ModelRequests:           budgetedModel.calls(),
 			ToolCalls:               toolsBudget.count(),
-			BuildSolves:             buildSolves,
+			BuildSolves:             builderClient.BuildSolves(),
 			RetainedToolOutputBytes: outputStore.size(),
 			Duration:                time.Since(started),
 		}
@@ -160,7 +159,6 @@ func Run(ctx context.Context, cfg Config) (result *Result, err error) {
 	}
 
 	build := func(dockerfile string) (string, error) {
-		buildSolves++
 		return runBuildOnce(ctx, builderClient, dockerfile, cfg.OCIOutput)
 	}
 

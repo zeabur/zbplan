@@ -100,6 +100,34 @@ func TestToolHistoryRewriterCompactsOnlyLargeEarlierResults(t *testing.T) {
 	}
 }
 
+func TestToolHistoryRewriterDiscardsEvictedLargePreview(t *testing.T) {
+	store := newToolOutputStore(defaultMaxToolOutputBytes + 128)
+	largeResult := strings.Repeat("x", defaultMaxToolOutputBytes+1)
+	oldRef := store.save("old-call", largeResult)
+	if oldRef == "" {
+		t.Fatal("old large result was not initially retained")
+	}
+	if ref := store.save("new-call", largeResult); ref == "" {
+		t.Fatal("new large result was not retained")
+	}
+	if _, ok := store.get(oldRef); ok {
+		t.Fatal("old large result was not evicted")
+	}
+
+	messages := []*schema.Message{
+		{Role: schema.User, Content: "plan"},
+		{Role: schema.Assistant, ToolCalls: []schema.ToolCall{{ID: "old-call"}}},
+		{Role: schema.Tool, ToolCallID: "old-call", Content: boundedToolOutput(largeResult, oldRef, defaultMaxToolOutputBytes)},
+		{Role: schema.Assistant, ToolCalls: []schema.ToolCall{{ID: "new-call"}}},
+		{Role: schema.Tool, ToolCallID: "new-call", Content: boundedToolOutput(largeResult, "", defaultMaxToolOutputBytes)},
+	}
+
+	rewritten := newToolHistoryRewriter(store)(context.Background(), messages)
+	if rewritten[2].Content != "[Earlier tool output discarded after its retention budget was exhausted.]" {
+		t.Fatalf("evicted large preview was not discarded: %q", rewritten[2].Content)
+	}
+}
+
 func TestReadToolOutputReturnsBoundedUTF8Range(t *testing.T) {
 	store := newToolOutputStore()
 	ref := store.save("call-1", strings.Repeat("界", 4000))

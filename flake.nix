@@ -40,7 +40,7 @@
             pname = "zbplan";
             version = "0.3.0";
             src = ./.;
-            vendorHash = "sha256-ezy0qgUzfGlIJk3aczIpkRmghUfMrBO+2yV6ZLZljoc=";
+            vendorHash = "sha256-d1D5omTC4pnya/F/nc/b2RdTcjA5rp5Fe2eik1D2Jyc=";
             doCheck = false;
           };
         }

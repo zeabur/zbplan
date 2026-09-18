@@ -11,6 +11,7 @@ import (
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/tonistiigi/fsutil"
+	"github.com/zeabur/zbplan/pkg/buildenv"
 	"golang.org/x/sync/errgroup"
 
 	_ "github.com/moby/buildkit/client/connhelper/dockercontainer"
@@ -20,6 +21,7 @@ type BuildImageOptions struct {
 	Dockerfile  string
 	Context     string
 	NetworkMode string
+	Variables   map[string]string
 }
 
 type Builder interface {
@@ -30,13 +32,18 @@ type Builder interface {
 type builder struct {
 	buildkitClient *client.Client
 	logger         *slog.Logger
+	onSolve        func()
 }
 
-func NewBuildkitBuilder(buildkitClient *client.Client, logger *slog.Logger) *builder {
-	return &builder{
+func NewBuildkitBuilder(buildkitClient *client.Client, logger *slog.Logger, solveObservers ...func()) *builder {
+	b := &builder{
 		buildkitClient: buildkitClient,
 		logger:         logger,
 	}
+	if len(solveObservers) > 0 {
+		b.onSolve = solveObservers[0]
+	}
+	return b
 }
 
 func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports []client.ExportEntry) error {
@@ -44,7 +51,11 @@ func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports 
 	if err != nil {
 		return fmt.Errorf("validate build policy: %w", err)
 	}
-	dockerfile := options.Dockerfile
+	b.logger.InfoContext(ctx, "preparing build environment")
+	prepared, err := buildenv.Prepare(ctx, options.Dockerfile, options.Variables)
+	if err != nil {
+		return fmt.Errorf("prepare build environment: %w", err)
+	}
 
 	if err := ctx.Err(); err != nil {
 		return err
@@ -65,7 +76,7 @@ func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports 
 	}
 
 	b.logger.InfoContext(ctx, "🐳 Writing Dockerfile...")
-	if err = os.WriteFile(path.Join(tempDir, "Dockerfile"), []byte(dockerfile), 0o644); err != nil {
+	if err = os.WriteFile(path.Join(tempDir, "Dockerfile"), []byte(prepared.Dockerfile), 0o644); err != nil {
 		b.logger.ErrorContext(ctx, "Failed to write dockerfile", slog.Any("error", err))
 		return fmt.Errorf("write dockerfile: %w", err)
 	}
@@ -76,7 +87,7 @@ func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports 
 		return fmt.Errorf("create dockerfile filesystem: %w", err)
 	}
 
-	frontendAttrs := dockerfileFrontendAttrs(networkMode)
+	frontendAttrs := dockerfileFrontendAttrs(networkMode, prepared.FrontendAttrs())
 	solveOpt := client.SolveOpt{
 		LocalMounts: map[string]fsutil.FS{
 			"context":    contextFS,
@@ -84,6 +95,7 @@ func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports 
 		},
 		Frontend:      "dockerfile.v0",
 		FrontendAttrs: frontendAttrs,
+		Session:       prepared.Session,
 		Exports:       exports,
 	}
 
@@ -93,6 +105,9 @@ func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports 
 	egrp, ctx := errgroup.WithContext(ctx)
 
 	egrp.Go(func() error {
+		if b.onSolve != nil {
+			b.onSolve()
+		}
 		_, err := b.buildkitClient.Solve(ctx, nil, solveOpt, ch)
 		return err
 	})
@@ -115,8 +130,10 @@ func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports 
 	return nil
 }
 
-func dockerfileFrontendAttrs(networkMode string) map[string]string {
-	attrs := map[string]string{"filename": "Dockerfile"}
+func dockerfileFrontendAttrs(networkMode string, attrs map[string]string) map[string]string {
+	if attrs == nil {
+		attrs = map[string]string{"filename": "Dockerfile"}
+	}
 	if networkMode == NetworkNone {
 		attrs["force-network-mode"] = NetworkNone
 	}
