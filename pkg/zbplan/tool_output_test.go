@@ -68,24 +68,35 @@ func TestToolOutputStoreEvictsWithinByteBudget(t *testing.T) {
 	}
 }
 
-func TestToolHistoryRewriterCompactsOnlyEarlierRounds(t *testing.T) {
+func TestToolHistoryRewriterCompactsOnlyLargeEarlierResults(t *testing.T) {
 	store := newToolOutputStore()
-	oldRef := store.save("old-call", "old full result")
+	largeResult := strings.Repeat("large", defaultMaxToolOutputBytes)
+	largeRef := store.save("large-call", largeResult)
+	store.save("small-call", "small manifest")
+	store.save("page-call", "paged output")
 	store.save("new-call", "new full result")
 	messages := []*schema.Message{
 		{Role: schema.User, Content: "plan"},
-		{Role: schema.Assistant, ToolCalls: []schema.ToolCall{{ID: "old-call"}}},
-		{Role: schema.Tool, ToolCallID: "old-call", Content: "old full result"},
+		{Role: schema.Assistant, ToolCalls: []schema.ToolCall{{ID: "large-call"}, {ID: "small-call"}, {ID: "page-call"}}},
+		{Role: schema.Tool, ToolCallID: "large-call", Content: boundedToolOutput(largeResult, largeRef, defaultMaxToolOutputBytes)},
+		{Role: schema.Tool, ToolCallID: "small-call", Content: "small manifest"},
+		{Role: schema.Tool, ToolCallID: "page-call", Content: "paged output"},
 		{Role: schema.Assistant, ToolCalls: []schema.ToolCall{{ID: "new-call"}}},
 		{Role: schema.Tool, ToolCallID: "new-call", Content: "new full result"},
 	}
 
 	rewritten := newToolHistoryRewriter(store)(context.Background(), messages)
-	if !strings.Contains(rewritten[2].Content, oldRef) {
-		t.Fatalf("old tool result was not replaced with its retrievable ref: %q", rewritten[2].Content)
+	if !strings.Contains(rewritten[2].Content, largeRef) {
+		t.Fatalf("large earlier result was not replaced with its retrievable ref: %q", rewritten[2].Content)
 	}
-	if rewritten[4].Content != "new full result" {
-		t.Fatalf("latest tool result was unexpectedly compacted: %q", rewritten[4].Content)
+	if rewritten[3].Content != "small manifest" {
+		t.Fatalf("small earlier result was unexpectedly compacted: %q", rewritten[3].Content)
+	}
+	if rewritten[4].Content != "paged output" {
+		t.Fatalf("paged earlier result was unexpectedly compacted: %q", rewritten[4].Content)
+	}
+	if rewritten[6].Content != "new full result" {
+		t.Fatalf("latest tool result was unexpectedly compacted: %q", rewritten[6].Content)
 	}
 }
 

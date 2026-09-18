@@ -91,6 +91,18 @@ func (s *toolOutputStore) refForCall(callID string) (string, bool) {
 	return ref, ok
 }
 
+func (s *toolOutputStore) compactableRefForCall(callID string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	ref, ok := s.callRefs[callID]
+	if !ok {
+		return "", false
+	}
+	output, ok := s.outputs[ref]
+	return ref, ok && len(output.value) > defaultMaxToolOutputBytes
+}
+
 func (s *toolOutputStore) get(ref string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -202,12 +214,11 @@ func newToolHistoryRewriter(store *toolOutputStore) react.MessageModifier {
 			if message.Role != schema.Tool || strings.HasPrefix(message.Content, "[Earlier tool output compacted.") {
 				continue
 			}
-			ref, ok := store.refForCall(message.ToolCallID)
-			if ok {
-				message.Content = fmt.Sprintf("[Earlier tool output compacted. Use read_tool_output with ref %q if it is needed again.]", ref)
-			} else {
-				message.Content = "[Earlier tool output discarded after its retention budget was exhausted.]"
+			ref, ok := store.compactableRefForCall(message.ToolCallID)
+			if !ok {
+				continue
 			}
+			message.Content = fmt.Sprintf("[Earlier tool output compacted. Use read_tool_output with ref %q if it is needed again.]", ref)
 			message.MultiContent = nil
 			message.UserInputMultiContent = nil
 		}
