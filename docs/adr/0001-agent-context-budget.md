@@ -19,8 +19,8 @@ Keep the eino harness. Enforce context limits inside zbplan:
 
 - Every tool result is capped at 12 KiB in model input. The full result stays in an execution-local store and is readable in 8 KiB pages through `read_tool_output`.
 - The retry build log is capped at 12 KiB, keeping the head and the failure tail.
-- Older tool rounds are compacted to a one-line reference. The compaction keeps a window of recent rounds in full; it does not compact everything before the current round.
-- A hard ceiling on total prompt bytes is checked before every model call.
+- Older tool rounds are compacted to a one-line reference. As implemented in PR #19, only the latest round is kept in full. This ADR asks for a window of recent rounds instead (roadmap step 1).
+- A hard ceiling on total prompt bytes is checked before every model call (roadmap step 2, not yet implemented).
 
 ## Reasons
 
