@@ -73,7 +73,10 @@ IMPORTANT: Your ENTIRE response MUST be ONLY the raw Dockerfile content. Do NOT 
 
 const efficiencyHintPrompt = "You used too many tool calls in the previous attempt. This time make at most 5 tool calls total: start with tree (depth=3) or glob ('**/pyproject.toml' etc.) for a quick overview, then output ONLY the raw Dockerfile — no explanations, no code fences."
 
+const maxBuildLogPromptBytes = 12 * 1024
+
 func buildRetryPrompt(dockerfile, buildLogs string) string {
+	buildLogs = boundedBuildLogs(buildLogs, maxBuildLogPromptBytes)
 	return fmt.Sprintf(`The previous Dockerfile failed to build. Fix it and emit ONLY the corrected Dockerfile — no explanations, no code fences.
 
 Previous Dockerfile:
@@ -81,6 +84,19 @@ Previous Dockerfile:
 
 Build error and logs:
 %s`, dockerfile, buildLogs)
+}
+
+func boundedBuildLogs(buildLogs string, maxBytes int) string {
+	if len(buildLogs) <= maxBytes {
+		return buildLogs
+	}
+	notice := fmt.Sprintf("\n\n[... build output truncated from %d bytes to reduce model input ...]\n\n", len(buildLogs))
+	previewBytes := maxBytes - len(notice)
+	if previewBytes <= 0 {
+		return boundedPrefix(notice, maxBytes)
+	}
+	headBytes := previewBytes / 3
+	return boundedPrefix(buildLogs, headBytes) + notice + boundedSuffix(buildLogs, previewBytes-headBytes)
 }
 
 var dockerfenceRe = regexp.MustCompile("(?i)```(?:dockerfile)?\n((?s:.*?))```")

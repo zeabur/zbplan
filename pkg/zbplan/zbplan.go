@@ -122,6 +122,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		prompt = buildRetryPrompt(cfg.UserDockerfile, buildLogs)
 	}
 
+	outputStore := newToolOutputStore()
 	tools := []tool.BaseTool{
 		plantools.NewGetDockerfileTemplateTool(),
 		plantools.NewListImagesTool(),
@@ -131,6 +132,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		plantools.NewGrepTool(cfg.ContextDir),
 		plantools.NewReadTool(cfg.ContextDir),
 		plantools.NewListTool(cfg.ContextDir),
+		newReadToolOutputTool(outputStore),
 	}
 	tools = append(tools, cfg.ExtraTools...)
 
@@ -138,9 +140,10 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		ToolCallingModel: cfg.Model,
 		ToolsConfig: compose.ToolsNodeConfig{
 			Tools:               tools,
-			ToolCallMiddlewares: []compose.ToolMiddleware{newLoggingMiddleware(cfg.Logger)},
+			ToolCallMiddlewares: []compose.ToolMiddleware{newToolOutputMiddleware(outputStore, cfg.Logger)},
 		},
-		MaxStep: cfg.MaxAgentSteps,
+		MessageRewriter: newToolHistoryRewriter(outputStore),
+		MaxStep:         cfg.MaxAgentSteps,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("zbplan: create agent: %w", err)
@@ -187,25 +190,4 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 
 	return nil, fmt.Errorf("zbplan: dockerfile failed to build after %d attempts; last dockerfile:\n%s",
 		cfg.MaxBuildAttempts, lastDockerfile)
-}
-
-func newLoggingMiddleware(logger *slog.Logger) compose.ToolMiddleware {
-	return compose.ToolMiddleware{
-		Invokable: func(next compose.InvokableToolEndpoint) compose.InvokableToolEndpoint {
-			return func(ctx context.Context, input *compose.ToolInput) (*compose.ToolOutput, error) {
-				logger.DebugContext(ctx, "tool call", "name", input.Name, "args", input.Arguments)
-				out, err := next(ctx, input)
-				if err != nil {
-					logger.ErrorContext(ctx, "tool error", "name", input.Name, "error", err)
-					return nil, err
-				}
-				snippet := out.Result
-				if len(snippet) > 100 {
-					snippet = snippet[:100] + "..."
-				}
-				logger.DebugContext(ctx, "tool result", "name", input.Name, "result", snippet)
-				return out, nil
-			}
-		},
-	}
 }

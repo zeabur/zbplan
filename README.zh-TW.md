@@ -114,6 +114,7 @@ flowchart TD
 ## 主要元件
 
 - `cmd/zbplan`: CLI entrypoint，建立 Claude ReAct agent，執行最多 3 次的「生成 Dockerfile → BuildKit 編譯 → 失敗修正」迴圈。
+- `pkg/zbplan`：Agent orchestration 與 context budgeting。模型輸入中的單次 tool result 和 BuildKit retry logs 以 12 KiB 為上限；完整 tool result 仍可透過 `read_tool_output` 取回，較早的 tool rounds 則會換成可取回內容的 reference。
 - `internal/plantools`: 提供 agent 可呼叫的工具，包括專案檔案檢索、Dockerfile template fuzzy search、registry image/tag search，以及 BuildKit client wrapper。
 - `internal/plantools/dockerfiles`: 內建 Dockerfile templates，目前涵蓋 Bun、Deno、FastAPI、Go、Java Gradle、Java Maven、Next.js、Node npm、Node pnpm、PHP、Python pip、Python uv、Ruby、Rust、Static。
 - `lib/registryutil`: 搜尋 Docker Hub / GHCR images，並用 fuzzy search 挑出符合版本需求的 tags。
