@@ -118,7 +118,7 @@ flowchart TD
 - `internal/plantools`: Bounded tools exposed to the agent — project file inspection, Dockerfile template fuzzy search, allowlisted registry image/tag search, and a BuildKit client wrapper.
 - `internal/plantools/dockerfiles`: Built-in Dockerfile templates, currently covering Bun, Deno, FastAPI, Go, Java Gradle, Java Maven, Next.js, Node npm, Node pnpm, Nuxt server, Nuxt static, PHP, Python pip, Python uv, Ruby, Rust, and Static.
 - `pkg/registryutil`: Searches Docker Hub / GHCR images and uses fuzzy search to pick tags matching the required version.
-- `pkg/builder`: Enforces Dockerfile policy, build network policy, build context mounting, and build progress reporting.
+- `pkg/builder`: Enforces Dockerfile policy, build context mounting, and build progress reporting.
 
 ## Usage
 
@@ -131,7 +131,7 @@ nix develop --command go run ./cmd/zbplan \
   --context-dir /path/to/project
 ```
 
-Dockerfile `RUN` networking is disabled by default. Builds whose `RUN` steps must download dependencies require the explicit `--allow-build-network` flag; only enable it for repositories you trust. The CLI and `pkg/zbplan` intentionally do not pass runtime secrets or environment variables into generated builds.
+Dockerfile `RUN` instructions use BuildKit's default network. Image references default to the `docker.io`, `ghcr.io`, `quay.io`, and `gcr.io` allowlist; replace it with a comma-separated `--allowed-registries` value when another registry is required. The CLI and `pkg/zbplan` intentionally do not pass runtime secrets or environment variables into generated builds.
 
 Host-enforced limits have secure defaults. Use `--max-build-attempts`, `--max-agent-steps`, `--max-model-requests`, `--max-tool-calls`, `--max-parallel-tool-calls`, `--max-retained-tool-output-bytes`, `--max-build-log-bytes`, `--run-timeout`, `--tool-timeout`, and `--build-timeout` to tighten them.
 

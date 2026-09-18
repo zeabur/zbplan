@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/cloudwego/eino/components/tool"
@@ -62,11 +64,15 @@ func (t *listImagesTool) InvokableRun(ctx context.Context, argsJSON string, _ ..
 }
 
 type listTagsTool struct {
-	finder registryutil.Finder
+	finder            registryutil.Finder
+	allowedRegistries []string
 }
 
-func NewListTagsTool() tool.InvokableTool {
-	return &listTagsTool{finder: registryutil.NewFinder()}
+func NewListTagsTool(allowedRegistries []string) tool.InvokableTool {
+	return &listTagsTool{
+		finder:            registryutil.NewFinder(),
+		allowedRegistries: slices.Clone(allowedRegistries),
+	}
 }
 
 func (t *listTagsTool) Info(_ context.Context) (*schema.ToolInfo, error) {
@@ -76,7 +82,7 @@ func (t *listTagsTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"registry": {
 				Type:     schema.String,
-				Desc:     "The registry hosting the image, e.g. 'docker.io', 'ghcr.io'",
+				Desc:     "The registry hosting the image, e.g. 'docker.io', 'ghcr.io', 'quay.io', 'gcr.io'",
 				Required: true,
 			},
 			"image": {
@@ -113,7 +119,7 @@ func (t *listTagsTool) InvokableRun(ctx context.Context, argsJSON string, _ ...t
 	if len(args.Query) > 128 {
 		return "", fmt.Errorf("query is too long")
 	}
-	result, err := ListTags(ctx, t.finder, args.Registry, args.Image, args.Query)
+	result, err := ListTags(ctx, t.finder, t.allowedRegistries, args.Registry, args.Image, args.Query)
 	if err != nil {
 		return "", fmt.Errorf("list tags: %w", err)
 	}
@@ -168,13 +174,21 @@ func ListImages(ctx context.Context, finder registryutil.Finder, query string) (
 	return results, nil
 }
 
-func ListTags(ctx context.Context, finder registryutil.Finder, registry, image, query string) ([]registryutil.Tag, error) {
+func ListTags(
+	ctx context.Context,
+	finder registryutil.Finder,
+	allowedRegistries []string,
+	registry, image, query string,
+) ([]registryutil.Tag, error) {
 	const maxTags = 5
 
-	switch registry {
-	case registryutil.RegistryDockerHub, registryutil.RegistryGHCR:
-	default:
-		return nil, fmt.Errorf("registry %q is not allowed (expected docker.io or ghcr.io)", registry)
+	registry = strings.ToLower(strings.TrimSpace(registry))
+	normalized, err := registryutil.NormalizeAllowedRegistries(allowedRegistries)
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Contains(normalized, registry) {
+		return nil, fmt.Errorf("registry %q is not allowed", registry)
 	}
 	if len(image) > 255 || !registryImageRE.MatchString(image) {
 		return nil, fmt.Errorf("image must be a lowercase registry path")

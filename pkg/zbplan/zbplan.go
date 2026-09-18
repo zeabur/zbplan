@@ -17,7 +17,7 @@ import (
 	"github.com/cloudwego/eino/flow/agent/react"
 	"github.com/cloudwego/eino/schema"
 	"github.com/zeabur/zbplan/internal/plantools"
-	buildpkg "github.com/zeabur/zbplan/pkg/builder"
+	"github.com/zeabur/zbplan/pkg/registryutil"
 )
 
 // Config controls a single Run invocation.
@@ -33,11 +33,10 @@ type Config struct {
 
 	// ContextDir is the source-code directory to plan for.
 	ContextDir string
+	// AllowedRegistries replaces the default image registry allowlist when
+	// non-empty. The defaults are docker.io, ghcr.io, quay.io, and gcr.io.
+	AllowedRegistries []string
 
-	// AllowBuildNetwork opts generated and user-provided Dockerfiles into the
-	// BuildKit default network. It is disabled by default because repository
-	// content and model output are untrusted.
-	AllowBuildNetwork bool
 	// UserDockerfile is an existing Dockerfile to try before invoking the agent.
 	// If it builds successfully the agent is skipped entirely.
 	// If it fails, the agent receives it alongside the build error as its
@@ -101,23 +100,24 @@ func Run(ctx context.Context, cfg Config) (result *Result, err error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	cfg.AllowedRegistries, err = registryutil.NormalizeAllowedRegistries(cfg.AllowedRegistries)
+	if err != nil {
+		return nil, fmt.Errorf("zbplan: invalid allowed registries: %w", err)
+	}
 	if cfg.SystemPrompt == "" {
-		cfg.SystemPrompt = DefaultSystemPrompt
+		cfg.SystemPrompt = DefaultSystemPrompt +
+			"\n\nAllowed image registries for this run: " + strings.Join(cfg.AllowedRegistries, ", ") + "."
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, limits.RunTimeout)
 	defer cancel()
 
-	networkMode := buildpkg.NetworkNone
-	if cfg.AllowBuildNetwork {
-		networkMode = buildpkg.NetworkDefault
-	}
 	builderClient, err := plantools.NewBuilderClient(ctx, plantools.BuilderClientConfig{
-		Addr:        cfg.BuildKitAddr,
-		ContextDir:  cfg.ContextDir,
-		NetworkMode: networkMode,
-		Timeout:     limits.BuildTimeout,
-		MaxLogBytes: limits.MaxBuildLogBytes,
+		Addr:              cfg.BuildKitAddr,
+		ContextDir:        cfg.ContextDir,
+		AllowedRegistries: cfg.AllowedRegistries,
+		Timeout:           limits.BuildTimeout,
+		MaxLogBytes:       limits.MaxBuildLogBytes,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("zbplan: create builder client: %w", err)
@@ -184,7 +184,7 @@ func Run(ctx context.Context, cfg Config) (result *Result, err error) {
 	tools := []tool.BaseTool{
 		plantools.NewGetDockerfileTemplateTool(),
 		plantools.NewListImagesTool(),
-		plantools.NewListTagsTool(),
+		plantools.NewListTagsTool(cfg.AllowedRegistries),
 		plantools.NewTreeTool(cfg.ContextDir),
 		plantools.NewGlobTool(cfg.ContextDir),
 		plantools.NewGrepTool(cfg.ContextDir),

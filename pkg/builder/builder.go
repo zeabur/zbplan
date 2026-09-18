@@ -18,10 +18,10 @@ import (
 )
 
 type BuildImageOptions struct {
-	Dockerfile  string
-	Context     string
-	NetworkMode string
-	Variables   map[string]string
+	Dockerfile        string
+	Context           string
+	AllowedRegistries []string
+	Variables         map[string]string
 }
 
 type Builder interface {
@@ -47,8 +47,7 @@ func NewBuildkitBuilder(buildkitClient *client.Client, logger *slog.Logger, solv
 }
 
 func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports []client.ExportEntry) error {
-	networkMode, err := validateBuildPolicy(options.Dockerfile, options.NetworkMode)
-	if err != nil {
+	if err := validateBuildPolicy(options.Dockerfile, options.AllowedRegistries); err != nil {
 		return fmt.Errorf("validate build policy: %w", err)
 	}
 	b.logger.InfoContext(ctx, "preparing build environment")
@@ -87,7 +86,7 @@ func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports 
 		return fmt.Errorf("create dockerfile filesystem: %w", err)
 	}
 
-	frontendAttrs := dockerfileFrontendAttrs(networkMode, prepared.FrontendAttrs())
+	frontendAttrs := prepared.FrontendAttrs()
 	solveOpt := client.SolveOpt{
 		LocalMounts: map[string]fsutil.FS{
 			"context":    contextFS,
@@ -128,16 +127,6 @@ func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports 
 	}
 
 	return nil
-}
-
-func dockerfileFrontendAttrs(networkMode string, attrs map[string]string) map[string]string {
-	if attrs == nil {
-		attrs = map[string]string{"filename": "Dockerfile"}
-	}
-	if networkMode == NetworkNone {
-		attrs["force-network-mode"] = NetworkNone
-	}
-	return attrs
 }
 
 // Build runs a BuildKit solve with no exporter. Use this to verify that a

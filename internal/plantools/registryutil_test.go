@@ -145,7 +145,7 @@ func TestListTags_ReturnsTags(t *testing.T) {
 		},
 	}
 
-	tags, err := plantools.ListTags(context.Background(), f, "docker.io", "golang", "1.22")
+	tags, err := plantools.ListTags(context.Background(), f, nil, "docker.io", "golang", "1.22")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestListTags_EmptyQuery_DefaultsToLatest(t *testing.T) {
 		},
 	}
 
-	_, err := plantools.ListTags(context.Background(), f, "docker.io", "golang", "")
+	_, err := plantools.ListTags(context.Background(), f, nil, "docker.io", "golang", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestListTags_FinderError_ReturnsError(t *testing.T) {
 		},
 	}
 
-	_, err := plantools.ListTags(context.Background(), f, "docker.io", "golang", "latest")
+	_, err := plantools.ListTags(context.Background(), f, nil, "docker.io", "golang", "latest")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -200,12 +200,41 @@ func TestListTags_RejectsUntrustedRegistry(t *testing.T) {
 		},
 	}
 
-	_, err := plantools.ListTags(context.Background(), f, "127.0.0.1:5000", "probe", "latest")
+	_, err := plantools.ListTags(context.Background(), f, nil, "127.0.0.1:5000", "probe", "latest")
 	if err == nil {
 		t.Fatal("expected untrusted registry to be rejected")
 	}
 	if called {
 		t.Fatal("finder was called for an untrusted registry")
+	}
+}
+
+func TestListTags_AllowsConfiguredRegistry(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	f := &mockFinder{
+		tagsFn: func(_ context.Context, registry, _, _ string, _ int) ([]registryutil.Tag, error) {
+			called = true
+			if registry != "registry.example.com" {
+				t.Fatalf("registry = %q", registry)
+			}
+			return []registryutil.Tag{{Name: "latest"}}, nil
+		},
+	}
+
+	if _, err := plantools.ListTags(
+		context.Background(),
+		f,
+		[]string{"registry.example.com"},
+		"registry.example.com",
+		"team/image",
+		"latest",
+	); err != nil {
+		t.Fatalf("configured registry was rejected: %v", err)
+	}
+	if !called {
+		t.Fatal("finder was not called for configured registry")
 	}
 }
 
@@ -220,7 +249,7 @@ func TestListTags_RejectsInvalidImagePath(t *testing.T) {
 		},
 	}
 
-	if _, err := plantools.ListTags(context.Background(), f, "docker.io", "../admin", "latest"); err == nil {
+	if _, err := plantools.ListTags(context.Background(), f, nil, "docker.io", "../admin", "latest"); err == nil {
 		t.Fatal("expected invalid image path to be rejected")
 	}
 	if called {

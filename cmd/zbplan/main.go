@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 
 	zbplan "github.com/zeabur/zbplan/pkg/zbplan"
 )
@@ -16,7 +17,7 @@ var (
 	contextDir                 = flag.String("context-dir", "", "the directory to use as the build context")
 	dockerfilePath             = flag.String("dockerfile", "", "optional: path to an existing Dockerfile to try first")
 	ociOut                     = flag.String("oci-out", "", "optional: write OCI image tarball to this path")
-	allowNetwork               = flag.Bool("allow-build-network", false, "allow Dockerfile RUN instructions to use BuildKit's default network")
+	allowedRegistries          = flag.String("allowed-registries", "", "comma-separated allowed image registries (default: docker.io,ghcr.io,quay.io,gcr.io)")
 	maxBuildAttempts           = flag.Int("max-build-attempts", 0, "maximum generated Dockerfile build attempts")
 	maxAgentSteps              = flag.Int("max-agent-steps", 0, "maximum ReAct graph steps per generation")
 	maxModelRequests           = flag.Int("max-model-requests", 0, "maximum model requests per run")
@@ -57,12 +58,16 @@ func main() {
 		}
 		userDockerfile = string(data)
 	}
+	var registries []string
+	if value := strings.TrimSpace(*allowedRegistries); value != "" {
+		registries = strings.Split(value, ",")
+	}
 
 	cfg := zbplan.Config{
 		Model:             chatModel,
 		BuildKitAddr:      *buildkitAddr,
 		ContextDir:        *contextDir,
-		AllowBuildNetwork: *allowNetwork,
+		AllowedRegistries: registries,
 		UserDockerfile:    userDockerfile,
 		Limits: zbplan.Limits{
 			MaxBuildAttempts:           *maxBuildAttempts,

@@ -118,7 +118,7 @@ flowchart TD
 - `internal/plantools`：提供 agent 有明確工作量上限的專案檔案檢索、Dockerfile template fuzzy search、registry allowlist image/tag search，以及 BuildKit client wrapper。
 - `internal/plantools/dockerfiles`：內建 Dockerfile templates，目前涵蓋 Bun、Deno、FastAPI、Go、Java Gradle、Java Maven、Next.js、Node npm、Node pnpm、Nuxt server、Nuxt static、PHP、Python pip、Python uv、Ruby、Rust、Static。
 - `pkg/registryutil`：搜尋 Docker Hub / GHCR images，並用 fuzzy search 挑出符合版本需求的 tags。
-- `pkg/builder`：執行 Dockerfile policy、build network policy、build context 掛載與 build progress reporting。
+- `pkg/builder`：執行 Dockerfile policy、build context 掛載與 build progress reporting。
 
 ## 使用方式
 
@@ -131,7 +131,7 @@ nix develop --command go run ./cmd/zbplan \
   --context-dir /path/to/project
 ```
 
-Dockerfile 的 `RUN` network 預設關閉。若 `RUN` 步驟必須下載依賴，需明確加上 `--allow-build-network`；只應對可信任的 repository 啟用。zbplan 不會把 runtime secrets 或環境變數傳入 AI 產生的 build。
+Dockerfile 的 `RUN` 指令使用 BuildKit 的預設 network。Image reference 預設允許 `docker.io`、`ghcr.io`、`quay.io` 與 `gcr.io`；需要其他 registry 時，可用逗號分隔的 `--allowed-registries` 取代預設清單。zbplan 不會把 runtime secrets 或環境變數傳入 AI 產生的 build。
 
 Host 會強制套用安全的預設上限。可透過 `--max-build-attempts`、`--max-agent-steps`、`--max-model-requests`、`--max-tool-calls`、`--max-parallel-tool-calls`、`--max-retained-tool-output-bytes`、`--max-build-log-bytes`、`--run-timeout`、`--tool-timeout` 與 `--build-timeout` 進一步收緊。
 

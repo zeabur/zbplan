@@ -2,6 +2,7 @@ package registryutil
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -14,11 +15,43 @@ import (
 const (
 	RegistryDockerHub = "docker.io"
 	RegistryGHCR      = "ghcr.io"
+	RegistryQuay      = "quay.io"
+	RegistryGCR       = "gcr.io"
 
 	defaultTagCacheTTL = 10 * time.Minute
 	defaultTagCacheMax = 1024
 	defaultHTTPTimeout = 30 * time.Second
 )
+
+// NormalizeAllowedRegistries returns a lowercase, trimmed, de-duplicated
+// registry allowlist. An empty list uses the supported public defaults.
+func NormalizeAllowedRegistries(configured []string) ([]string, error) {
+	if len(configured) == 0 {
+		return []string{RegistryDockerHub, RegistryGHCR, RegistryQuay, RegistryGCR}, nil
+	}
+
+	seen := make(map[string]struct{}, len(configured))
+	registries := make([]string, 0, len(configured))
+	for _, registry := range configured {
+		registry = strings.ToLower(strings.TrimSpace(registry))
+		if registry == "" {
+			continue
+		}
+		parsed, err := name.NewRegistry(registry, name.StrictValidation)
+		if err != nil || parsed.Name() != registry {
+			return nil, fmt.Errorf("invalid registry %q", registry)
+		}
+		if _, ok := seen[registry]; ok {
+			continue
+		}
+		seen[registry] = struct{}{}
+		registries = append(registries, registry)
+	}
+	if len(registries) == 0 {
+		return nil, fmt.Errorf("registry allowlist is empty")
+	}
+	return registries, nil
+}
 
 type Tag struct {
 	Name      string

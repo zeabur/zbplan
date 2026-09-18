@@ -4,15 +4,12 @@ import (
 	"context"
 	"strings"
 	"testing"
-
-	"github.com/zeabur/zbplan/pkg/builder"
 )
 
 func TestRunBuildReturnsPolicyDiagnostic(t *testing.T) {
 	t.Parallel()
 
 	client := &BuilderClient{
-		networkMode: builder.NetworkNone,
 		maxLogBytes: 4 * 1024,
 	}
 	logs, err := client.RunBuild(context.Background(), "FROM scratch\nADD https://example.com/payload /payload\n", nil)
@@ -28,7 +25,6 @@ func TestRejectedBuildDoesNotCountSolve(t *testing.T) {
 	t.Parallel()
 
 	client := &BuilderClient{
-		networkMode: builder.NetworkNone,
 		maxLogBytes: 4 * 1024,
 	}
 	if _, err := client.RunBuild(context.Background(), "FROM scratch\nADD local /local\n", nil); err == nil {

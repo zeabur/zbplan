@@ -5,34 +5,37 @@ import (
 	"testing"
 )
 
-func TestValidateBuildPolicyDefaultsToNoNetwork(t *testing.T) {
-	t.Parallel()
-
-	mode, err := validateBuildPolicy("FROM scratch\nCOPY app /app\n", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mode != NetworkNone {
-		t.Fatalf("network mode = %q, want %q", mode, NetworkNone)
-	}
-}
-
 func TestValidateBuildPolicyAllowsOfficialDockerfileFrontend(t *testing.T) {
 	t.Parallel()
 
-	if _, err := validateBuildPolicy("# syntax=docker/dockerfile:1.10\nFROM scratch\n", NetworkNone); err != nil {
+	if err := validateBuildPolicy("# syntax=docker/dockerfile:1.10\nFROM scratch\n", nil); err != nil {
 		t.Fatalf("official Dockerfile frontend was rejected: %v", err)
 	}
 }
 
-func TestDockerfileFrontendAttrsOmitsDefaultNetworkOverride(t *testing.T) {
+func TestValidateBuildPolicyAllowsTrustedRegistries(t *testing.T) {
 	t.Parallel()
 
-	if _, ok := dockerfileFrontendAttrs(NetworkDefault, nil)["force-network-mode"]; ok {
-		t.Fatal("default network must use BuildKit's native default")
+	for _, registry := range []string{"docker.io", "ghcr.io", "quay.io", "gcr.io"} {
+		t.Run(registry, func(t *testing.T) {
+			t.Parallel()
+			dockerfile := "FROM " + registry + "/example/image:latest\n"
+			if err := validateBuildPolicy(dockerfile, nil); err != nil {
+				t.Fatalf("trusted registry was rejected: %v", err)
+			}
+		})
 	}
-	if got := dockerfileFrontendAttrs(NetworkNone, nil)["force-network-mode"]; got != NetworkNone {
-		t.Fatalf("force-network-mode = %q, want %q", got, NetworkNone)
+}
+
+func TestValidateBuildPolicyUsesConfiguredRegistries(t *testing.T) {
+	t.Parallel()
+
+	dockerfile := "FROM registry.example.com/team/image:latest AS builder\nCOPY --from=builder /app /app\n"
+	if err := validateBuildPolicy(dockerfile, []string{"registry.example.com"}); err != nil {
+		t.Fatalf("configured registry was rejected: %v", err)
+	}
+	if err := validateBuildPolicy("FROM ghcr.io/example/image:latest\n", []string{"registry.example.com"}); err == nil {
+		t.Fatal("registry outside configured allowlist was accepted")
 	}
 }
 
@@ -53,7 +56,7 @@ func TestValidateBuildPolicyRejectsDangerousInstructions(t *testing.T) {
 	for name, dockerfile := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := validateBuildPolicy(dockerfile, NetworkNone); err == nil {
+			if err := validateBuildPolicy(dockerfile, nil); err == nil {
 				t.Fatal("expected policy rejection")
 			}
 		})
@@ -63,7 +66,7 @@ func TestValidateBuildPolicyRejectsDangerousInstructions(t *testing.T) {
 func TestValidateBuildPolicyRejectsSpacedSyntaxDirective(t *testing.T) {
 	t.Parallel()
 
-	if _, err := validateBuildPolicy("# syntax = evil.example/frontend:1\nFROM alpine\n", NetworkNone); err == nil {
+	if err := validateBuildPolicy("# syntax = evil.example/frontend:1\nFROM alpine\n", nil); err == nil {
 		t.Fatal("expected custom syntax rejection")
 	}
 }
@@ -72,7 +75,7 @@ func TestValidateBuildPolicyRejectsOversizedDockerfile(t *testing.T) {
 	t.Parallel()
 
 	dockerfile := "FROM scratch\n#" + strings.Repeat("x", maxDockerfileBytes)
-	if _, err := validateBuildPolicy(dockerfile, NetworkNone); err == nil {
+	if err := validateBuildPolicy(dockerfile, nil); err == nil {
 		t.Fatal("expected oversized Dockerfile rejection")
 	}
 }

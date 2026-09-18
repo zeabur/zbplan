@@ -14,21 +14,21 @@ import (
 )
 
 type BuilderClientConfig struct {
-	Addr        string
-	ContextDir  string
-	NetworkMode string
-	Timeout     time.Duration
-	MaxLogBytes int
+	Addr              string
+	ContextDir        string
+	AllowedRegistries []string
+	Timeout           time.Duration
+	MaxLogBytes       int
 }
 
 // BuilderClient wraps a BuildKit client and build context for repeated builds.
 type BuilderClient struct {
-	contextDir  string
-	networkMode string
-	timeout     time.Duration
-	maxLogBytes int
-	client      *client.Client
-	solveCount  atomic.Int64
+	contextDir        string
+	allowedRegistries []string
+	timeout           time.Duration
+	maxLogBytes       int
+	client            *client.Client
+	solveCount        atomic.Int64
 }
 
 // NewBuilderClient dials BuildKit and returns a BuilderClient ready for builds.
@@ -38,11 +38,11 @@ func NewBuilderClient(ctx context.Context, cfg BuilderClientConfig) (*BuilderCli
 		return nil, fmt.Errorf("new buildkit client: %w", err)
 	}
 	return &BuilderClient{
-		contextDir:  cfg.ContextDir,
-		networkMode: cfg.NetworkMode,
-		timeout:     cfg.Timeout,
-		maxLogBytes: cfg.MaxLogBytes,
-		client:      c,
+		contextDir:        cfg.ContextDir,
+		allowedRegistries: cfg.AllowedRegistries,
+		timeout:           cfg.Timeout,
+		maxLogBytes:       cfg.MaxLogBytes,
+		client:            c,
 	}, nil
 }
 
@@ -74,9 +74,9 @@ func (b *BuilderClient) RunBuild(ctx context.Context, dockerfile string, ociOutp
 
 	bld := builder.NewBuildkitBuilder(b.client, logger, func() { b.solveCount.Add(1) })
 	options := builder.BuildImageOptions{
-		Dockerfile:  dockerfile,
-		Context:     b.contextDir,
-		NetworkMode: b.networkMode,
+		Dockerfile:        dockerfile,
+		Context:           b.contextDir,
+		AllowedRegistries: b.allowedRegistries,
 	}
 	if ociOutput == nil {
 		err = bld.Build(ctx, options)
