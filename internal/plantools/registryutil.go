@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"sync"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	"github.com/zeabur/zbplan/pkg/registryutil"
 )
+
+var registryImageRE = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$`)
 
 type listImagesTool struct {
 	finder registryutil.Finder
@@ -43,6 +46,9 @@ func (t *listImagesTool) InvokableRun(ctx context.Context, argsJSON string, _ ..
 	}
 	if args.Query == "" {
 		return "", fmt.Errorf("query is required")
+	}
+	if len(args.Query) > 128 {
+		return "", fmt.Errorf("query is too long")
 	}
 	result, err := ListImages(ctx, t.finder, args.Query)
 	if err != nil {
@@ -101,6 +107,12 @@ func (t *listTagsTool) InvokableRun(ctx context.Context, argsJSON string, _ ...t
 	if args.Image == "" {
 		return "", fmt.Errorf("image is required")
 	}
+	if len(args.Image) > 255 || !registryImageRE.MatchString(args.Image) {
+		return "", fmt.Errorf("image must be a lowercase registry path")
+	}
+	if len(args.Query) > 128 {
+		return "", fmt.Errorf("query is too long")
+	}
 	result, err := ListTags(ctx, t.finder, args.Registry, args.Image, args.Query)
 	if err != nil {
 		return "", fmt.Errorf("list tags: %w", err)
@@ -113,6 +125,13 @@ func (t *listTagsTool) InvokableRun(ctx context.Context, argsJSON string, _ ...t
 }
 
 func ListImages(ctx context.Context, finder registryutil.Finder, query string) ([]registryutil.Image, error) {
+	if query == "" {
+		return nil, fmt.Errorf("query is required")
+	}
+	if len(query) > 128 {
+		return nil, fmt.Errorf("query is too long")
+	}
+
 	const maxPerRegistry = 3
 
 	registries := []string{"docker.io", "ghcr.io"}
@@ -151,6 +170,18 @@ func ListImages(ctx context.Context, finder registryutil.Finder, query string) (
 
 func ListTags(ctx context.Context, finder registryutil.Finder, registry, image, query string) ([]registryutil.Tag, error) {
 	const maxTags = 5
+
+	switch registry {
+	case registryutil.RegistryDockerHub, registryutil.RegistryGHCR:
+	default:
+		return nil, fmt.Errorf("registry %q is not allowed (expected docker.io or ghcr.io)", registry)
+	}
+	if len(image) > 255 || !registryImageRE.MatchString(image) {
+		return nil, fmt.Errorf("image must be a lowercase registry path")
+	}
+	if len(query) > 128 {
+		return nil, fmt.Errorf("query is too long")
+	}
 
 	if query == "" {
 		query = "latest"

@@ -85,9 +85,9 @@ Zeabur 打算基於這個方向做出改進：
 
 ```mermaid
 flowchart TD
-    A[啟動 zbplan CLI] --> B[讀取 flags: buildkit-addr, context-dir, variables]
+    A[啟動 zbplan CLI] --> B[讀取專案路徑、網路政策與執行預算]
     B --> C[連線 BuildKit]
-    C --> D[建立 Claude Sonnet 4.6 ReAct agent]
+    C --> D[建立指定模型的 ReAct agent]
     D --> E[註冊 tools]
 
     E --> E1[專案檢索: tree, glob, grep, read, list]
@@ -100,8 +100,8 @@ flowchart TD
 
     F --> G[Agent 輸出 raw Dockerfile]
     G --> H[抽取 Dockerfile 內容]
-    H --> I[注入 ZEABUR_ENV_* build args / env vars]
-    I --> J[BuildKit build]
+    H --> I[由 host 驗證 Dockerfile 政策]
+    I --> J[執行一次有資源上限的 BuildKit build]
 
     J -->|成功| K[輸出 Dockerfile]
     J -->|失敗| L[收集 BuildKit logs]
@@ -113,12 +113,12 @@ flowchart TD
 
 ## 主要元件
 
-- `cmd/zbplan`: CLI entrypoint，建立 Claude ReAct agent，執行最多 3 次的「生成 Dockerfile → BuildKit 編譯 → 失敗修正」迴圈。
-- `pkg/zbplan`：Agent orchestration 與 context budgeting。模型輸入中的單次 tool result 和 BuildKit retry logs 以 12 KiB 為上限；完整 tool result 仍可透過 `read_tool_output` 取回，較早的 tool rounds 則會換成可取回內容的 reference。
-- `internal/plantools`: 提供 agent 可呼叫的工具，包括專案檔案檢索、Dockerfile template fuzzy search、registry image/tag search，以及 BuildKit client wrapper。
-- `internal/plantools/dockerfiles`: 內建 Dockerfile templates，目前涵蓋 Bun、Deno、FastAPI、Go、Java Gradle、Java Maven、Next.js、Node npm、Node pnpm、PHP、Python pip、Python uv、Ruby、Rust、Static。
-- `lib/registryutil`: 搜尋 Docker Hub / GHCR images，並用 fuzzy search 挑出符合版本需求的 tags。
-- `lib/builder`: BuildKit builder，負責 Dockerfile 前處理、環境變數注入、build context 掛載與 build progress logging。
+- `cmd/zbplan`：CLI entrypoint，建立指定模型的 ReAct agent，並限制 model、tool、build、平行數與總執行時間。
+- `pkg/zbplan`：Agent orchestration 與 context budgeting。單次送入模型的 tool result 和 BuildKit retry logs 以 12 KiB 為上限；完整 tool result 只會保留在有總容量限制的 store 裡，較早的 tool rounds 則換成可取回內容的 reference。
+- `internal/plantools`：提供 agent 有明確工作量上限的專案檔案檢索、Dockerfile template fuzzy search、registry allowlist image/tag search，以及 BuildKit client wrapper。
+- `internal/plantools/dockerfiles`：內建 Dockerfile templates，目前涵蓋 Bun、Deno、FastAPI、Go、Java Gradle、Java Maven、Next.js、Node npm、Node pnpm、Nuxt server、Nuxt static、PHP、Python pip、Python uv、Ruby、Rust、Static。
+- `pkg/registryutil`：搜尋 Docker Hub / GHCR images，並用 fuzzy search 挑出符合版本需求的 tags。
+- `pkg/builder`：執行 Dockerfile policy、build network policy、build context 掛載與 build progress reporting。
 
 ## 使用方式
 
@@ -131,7 +131,11 @@ nix develop --command go run ./cmd/zbplan \
   --context-dir /path/to/project
 ```
 
-可以用 `--variables KEY=value` 傳入環境變數。這些變數會在 Dockerfile 每個 stage 的 `FROM` 後被注入成 `ARG ZEABUR_ENV_*` 與對應的 `ENV`。
+Dockerfile 的 `RUN` network 預設關閉。若 `RUN` 步驟必須下載依賴，需明確加上 `--allow-build-network`；只應對可信任的 repository 啟用。zbplan 不會把 runtime secrets 或環境變數傳入 AI 產生的 build。
+
+Host 會強制套用安全的預設上限。可透過 `--max-build-attempts`、`--max-agent-steps`、`--max-model-requests`、`--max-tool-calls`、`--max-parallel-tool-calls`、`--max-retained-tool-output-bytes`、`--max-build-log-bytes`、`--run-timeout`、`--tool-timeout` 與 `--build-timeout` 進一步收緊。
+
+預設值為：3 次 build attempts、每次 generation 16 個 agent steps、24 次 model requests、24 次 tool calls、4 次平行 tool calls、15 分鐘總執行時間、每個 tool 30 秒、每次 build 10 分鐘、1 MiB tool 資料，以及每次 build 128 KiB logs。
 
 ## 開發
 

@@ -46,6 +46,28 @@ func TestToolOutputMiddlewareBoundsAndPreservesLargeResult(t *testing.T) {
 	}
 }
 
+func TestToolOutputStoreEvictsWithinByteBudget(t *testing.T) {
+	store := newToolOutputStore(16)
+	first := store.save("a", "12345678")
+	second := store.save("b", "abcdefgh")
+
+	if first == "" || second == "" {
+		t.Fatalf("expected retained refs, got %q and %q", first, second)
+	}
+	if _, ok := store.get(first); ok {
+		t.Fatal("oldest output was not evicted")
+	}
+	if got, ok := store.get(second); !ok || got != "abcdefgh" {
+		t.Fatalf("latest output = %q, %v", got, ok)
+	}
+	if store.size() > 16 {
+		t.Fatalf("store retained %d bytes, limit is 16", store.size())
+	}
+	if ref := store.save("oversized", "01234567890123456789"); ref != "" {
+		t.Fatalf("oversized output received ref %q", ref)
+	}
+}
+
 func TestToolHistoryRewriterCompactsOnlyEarlierRounds(t *testing.T) {
 	store := newToolOutputStore()
 	oldRef := store.save("old-call", "old full result")

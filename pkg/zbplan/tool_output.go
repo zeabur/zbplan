@@ -20,27 +20,64 @@ const (
 	maxToolOutputReadBytes    = 8 * 1024
 )
 
-type toolOutputStore struct {
-	mu       sync.RWMutex
-	nextRef  uint64
-	outputs  map[string]string
-	callRefs map[string]string
+type storedToolOutput struct {
+	callID   string
+	toolName string
+	args     string
+	value    string
+	size     int
 }
 
-func newToolOutputStore() *toolOutputStore {
+type toolOutputStore struct {
+	mu         sync.RWMutex
+	nextRef    uint64
+	maxBytes   int
+	totalBytes int
+	outputs    map[string]storedToolOutput
+	callRefs   map[string]string
+	order      []string
+}
+
+func newToolOutputStore(maxBytes ...int) *toolOutputStore {
+	limit := DefaultLimits().MaxRetainedToolOutputBytes
+	if len(maxBytes) > 0 {
+		limit = maxBytes[0]
+	}
 	return &toolOutputStore{
-		outputs:  make(map[string]string),
+		maxBytes: limit,
+		outputs:  make(map[string]storedToolOutput),
 		callRefs: make(map[string]string),
 	}
 }
 
 func (s *toolOutputStore) save(callID, output string) string {
+	return s.saveCall(callID, "", "", output)
+}
+
+func (s *toolOutputStore) saveCall(callID, toolName, args, output string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.nextRef++
 	ref := fmt.Sprintf("out-%d", s.nextRef)
-	s.outputs[ref] = output
+	entrySize := len(ref) + len(callID) + len(toolName) + len(args) + len(output)
+	if entrySize > s.maxBytes {
+		return ""
+	}
+	for s.totalBytes+entrySize > s.maxBytes && len(s.order) > 0 {
+		oldest := s.order[0]
+		s.order = s.order[1:]
+		stored := s.outputs[oldest]
+		delete(s.outputs, oldest)
+		s.totalBytes -= stored.size
+		if stored.callID != "" && s.callRefs[stored.callID] == oldest {
+			delete(s.callRefs, stored.callID)
+		}
+	}
+
+	s.outputs[ref] = storedToolOutput{callID: callID, toolName: toolName, args: args, value: output, size: entrySize}
+	s.order = append(s.order, ref)
+	s.totalBytes += entrySize
 	if callID != "" {
 		s.callRefs[callID] = ref
 	}
@@ -58,27 +95,49 @@ func (s *toolOutputStore) get(ref string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	output, ok := s.outputs[ref]
-	return output, ok
+	return output.value, ok
+}
+
+func (s *toolOutputStore) size() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.totalBytes
+}
+
+func (s *toolOutputStore) catalog(maxBytes int) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result strings.Builder
+	for _, ref := range s.order {
+		stored, ok := s.outputs[ref]
+		if !ok || stored.toolName == "" {
+			continue
+		}
+		line := fmt.Sprintf("- %s: %s %s\n", ref, stored.toolName, stored.args)
+		if result.Len()+len(line) > maxBytes {
+			break
+		}
+		result.WriteString(line)
+	}
+	return result.String()
 }
 
 func newToolOutputMiddleware(store *toolOutputStore, logger *slog.Logger) compose.ToolMiddleware {
 	return compose.ToolMiddleware{
 		Invokable: func(next compose.InvokableToolEndpoint) compose.InvokableToolEndpoint {
 			return func(ctx context.Context, input *compose.ToolInput) (*compose.ToolOutput, error) {
-				logger.DebugContext(ctx, "tool call", "name", input.Name, "args", input.Arguments)
+				logger.DebugContext(ctx, "tool call", "name", input.Name, "call_id", input.CallID)
 				out, err := next(ctx, input)
 				if err != nil {
 					logger.ErrorContext(ctx, "tool error", "name", input.Name, "error", err)
 					return nil, err
 				}
 
-				ref := store.save(input.CallID, out.Result)
+				resultBytes := len(out.Result)
+				ref := store.saveCall(input.CallID, input.Name, input.Arguments, out.Result)
 				out.Result = boundedToolOutput(out.Result, ref, defaultMaxToolOutputBytes)
-				snippet := boundedPrefix(out.Result, 100)
-				if len(snippet) < len(out.Result) {
-					snippet += "..."
-				}
-				logger.DebugContext(ctx, "tool result", "name", input.Name, "result", snippet)
+				logger.DebugContext(ctx, "tool result", "name", input.Name, "call_id", input.CallID, "bytes", resultBytes, "retained", ref != "")
 				return out, nil
 			}
 		},
@@ -90,7 +149,10 @@ func boundedToolOutput(output, ref string, maxBytes int) string {
 		return output
 	}
 
-	notice := fmt.Sprintf("\n\n[Tool output truncated: %d bytes total. Full output is %q; use read_tool_output with that ref and a byte offset to inspect more.]\n\n", len(output), ref)
+	notice := fmt.Sprintf("\n\n[Tool output truncated: %d bytes total. Full output was not retained because the run output-store budget was exhausted.]\n\n", len(output))
+	if ref != "" {
+		notice = fmt.Sprintf("\n\n[Tool output truncated: %d bytes total. Full output is %q; use read_tool_output with that ref and a byte offset to inspect more.]\n\n", len(output), ref)
+	}
 	previewBytes := maxBytes - len(notice)
 	if previewBytes <= 0 {
 		return boundedPrefix(notice, maxBytes)
@@ -141,10 +203,11 @@ func newToolHistoryRewriter(store *toolOutputStore) react.MessageModifier {
 				continue
 			}
 			ref, ok := store.refForCall(message.ToolCallID)
-			if !ok {
-				continue
+			if ok {
+				message.Content = fmt.Sprintf("[Earlier tool output compacted. Use read_tool_output with ref %q if it is needed again.]", ref)
+			} else {
+				message.Content = "[Earlier tool output discarded after its retention budget was exhausted.]"
 			}
-			message.Content = fmt.Sprintf("[Earlier tool output compacted. Use read_tool_output with ref %q if it is needed again.]", ref)
 			message.MultiContent = nil
 			message.UserInputMultiContent = nil
 		}

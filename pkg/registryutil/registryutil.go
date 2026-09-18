@@ -17,6 +17,7 @@ const (
 
 	defaultTagCacheTTL = 10 * time.Minute
 	defaultTagCacheMax = 1024
+	defaultHTTPTimeout = 30 * time.Second
 )
 
 type Tag struct {
@@ -121,5 +122,5 @@ func (f *finder) httpClient() *http.Client {
 	if f.HTTPClient != nil {
 		return f.HTTPClient
 	}
-	return http.DefaultClient
+	return &http.Client{Timeout: defaultHTTPTimeout}
 }

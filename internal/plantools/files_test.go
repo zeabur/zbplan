@@ -9,9 +9,12 @@ import (
 	"testing"
 )
 
-func TestReadToolReturnsDirectoryNotice(t *testing.T) {
+func TestReadToolListsDirectory(t *testing.T) {
 	baseDir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(baseDir, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baseDir, "src", "main.go"), []byte("package main\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -19,8 +22,8 @@ func TestReadToolReturnsDirectoryNotice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read directory returned error: %v", err)
 	}
-	if result != "is a directory" {
-		t.Fatalf("expected directory notice, got %q", result)
+	if result != "main.go" {
+		t.Fatalf("expected directory listing, got %q", result)
 	}
 }
 
@@ -34,7 +37,7 @@ func TestReadToolReturnsEmptyFileNotice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read empty file returned error: %v", err)
 	}
-	if result != "empty file" {
+	if result != "[README.md: empty file]" {
 		t.Fatalf("expected empty file notice, got %q", result)
 	}
 }
@@ -49,7 +52,7 @@ func TestReadToolReturnsOutOfRangeNotice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read out-of-range offset returned error: %v", err)
 	}
-	if result != "no lines in requested range" {
+	if result != "[README.md: no lines after offset 10]" {
 		t.Fatalf("expected out-of-range notice, got %q", result)
 	}
 }
@@ -72,6 +75,38 @@ func TestReadToolRejectsSymlinkEscape(t *testing.T) {
 	_, err := NewReadTool(baseDir).InvokableRun(context.Background(), `{"path":"link.txt"}`)
 	if err == nil || !strings.Contains(err.Error(), "path escapes base directory") {
 		t.Fatalf("expected path escape error, got %v", err)
+	}
+}
+
+func TestReadToolRejectsNegativeLimitAndSensitiveFiles(t *testing.T) {
+	baseDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(baseDir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baseDir, ".env"), []byte("TOKEN=secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := NewReadTool(baseDir).InvokableRun(context.Background(), `{"path":"README.md","limit":-1}`); err == nil {
+		t.Fatal("expected negative limit rejection")
+	}
+	if _, err := NewReadTool(baseDir).InvokableRun(context.Background(), `{"path":".env"}`); err == nil {
+		t.Fatal("expected sensitive path rejection")
+	}
+}
+
+func TestReadToolReturnsLineNumbersAndContinuation(t *testing.T) {
+	baseDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(baseDir, "README.md"), []byte("one\ntwo\nthree\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewReadTool(baseDir).InvokableRun(context.Background(), `{"path":"README.md","limit":2}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "[README.md lines 1-2; next_offset=2]") || !strings.Contains(result, "1:one\n2:two") {
+		t.Fatalf("unexpected bounded read result: %q", result)
 	}
 }
 

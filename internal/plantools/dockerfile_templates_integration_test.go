@@ -13,6 +13,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"github.com/zeabur/zbplan/internal/plantools"
+	"github.com/zeabur/zbplan/pkg/builder"
 )
 
 // TestTemplatesBuild verifies that every embedded Dockerfile template builds
@@ -38,13 +39,19 @@ func TestTemplatesBuild(t *testing.T) {
 				t.Fatalf("fixture missing — create testdata/fixtures/%s/: %v", tpl.Name, err)
 			}
 
-			bc, err := plantools.NewBuilderClient(ctx, addr, fixtureDir, nil)
+			bc, err := plantools.NewBuilderClient(ctx, plantools.BuilderClientConfig{
+				Addr:        addr,
+				ContextDir:  fixtureDir,
+				NetworkMode: builder.NetworkDefault,
+				Timeout:     10 * time.Minute,
+				MaxLogBytes: 128 << 10,
+			})
 			if err != nil {
 				t.Fatalf("connect to buildkit: %v", err)
 			}
 			t.Cleanup(func() { _ = bc.Close() })
 
-			logs, err := bc.RunBuild(ctx, tpl.Content)
+			logs, err := bc.RunBuild(ctx, tpl.Content, nil)
 			if err != nil {
 				t.Fatalf("build failed:\n%s\nerr: %v", logs, err)
 			}

@@ -188,3 +188,42 @@ func TestListTags_FinderError_ReturnsError(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 }
+
+func TestListTags_RejectsUntrustedRegistry(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	f := &mockFinder{
+		tagsFn: func(_ context.Context, _, _, _ string, _ int) ([]registryutil.Tag, error) {
+			called = true
+			return nil, nil
+		},
+	}
+
+	_, err := plantools.ListTags(context.Background(), f, "127.0.0.1:5000", "probe", "latest")
+	if err == nil {
+		t.Fatal("expected untrusted registry to be rejected")
+	}
+	if called {
+		t.Fatal("finder was called for an untrusted registry")
+	}
+}
+
+func TestListTags_RejectsInvalidImagePath(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	f := &mockFinder{
+		tagsFn: func(_ context.Context, _, _, _ string, _ int) ([]registryutil.Tag, error) {
+			called = true
+			return nil, nil
+		},
+	}
+
+	if _, err := plantools.ListTags(context.Background(), f, "docker.io", "../admin", "latest"); err == nil {
+		t.Fatal("expected invalid image path to be rejected")
+	}
+	if called {
+		t.Fatal("finder was called for an invalid image path")
+	}
+}

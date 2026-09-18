@@ -6,16 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	"github.com/moby/patternmatcher"
-	"github.com/yargevad/filepathx"
 )
 
 var defaultIgnoredDirs = []string{
@@ -34,15 +36,57 @@ var defaultIgnoredDirs = []string{
 
 var errPathEscapesBase = errors.New("path escapes base directory")
 
+const (
+	maxReadLines         = 200
+	maxReadBytes         = 64 * 1024
+	maxReadableFileBytes = 1 << 20
+	maxListEntries       = 200
+	maxDirectoryScan     = 10_000
+	maxGlobResults       = 200
+	maxGlobVisited       = 20_000
+	maxGrepResults       = 100
+	maxGrepFiles         = 10_000
+	maxGrepBytes         = 16 << 20
+	maxIgnoreFileBytes   = 256 * 1024
+	maxIgnorePatterns    = 2_000
+	maxTreeDepth         = 5
+)
+
+func isSensitiveToolPath(path string) bool {
+	lowerPath := filepath.ToSlash(strings.ToLower(path))
+	base := filepath.Base(lowerPath)
+	switch base {
+	case ".env", ".envrc", ".dev.vars", ".npmrc", ".pypirc", ".netrc", "id_rsa", "id_ed25519", ".dockerconfigjson":
+		return true
+	}
+	if strings.HasPrefix(base, ".env.") ||
+		lowerPath == ".docker/config.json" ||
+		strings.HasSuffix(lowerPath, "/.docker/config.json") {
+		return true
+	}
+	switch filepath.Ext(base) {
+	case ".pem", ".key", ".p12", ".pfx":
+		return true
+	default:
+		return false
+	}
+}
+
 func buildShouldIgnore(baseDir string) func(string, bool) bool {
 	patterns := make([]string, len(defaultIgnoredDirs))
 	copy(patterns, defaultIgnoredDirs)
-
-	if data, err := os.ReadFile(filepath.Join(baseDir, ".gitignore")); err == nil {
-		for line := range strings.SplitSeq(string(data), "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" && !strings.HasPrefix(line, "#") {
-				patterns = append(patterns, line)
+	if ignoreFile, err := os.Open(filepath.Join(baseDir, ".gitignore")); err == nil {
+		data, readErr := io.ReadAll(io.LimitReader(ignoreFile, maxIgnoreFileBytes+1))
+		_ = ignoreFile.Close()
+		if readErr == nil && len(data) <= maxIgnoreFileBytes {
+			for line := range strings.SplitSeq(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" && !strings.HasPrefix(line, "#") {
+					patterns = append(patterns, line)
+					if len(patterns) >= maxIgnorePatterns {
+						break
+					}
+				}
 			}
 		}
 	}
@@ -134,16 +178,64 @@ func secureExistingToolPath(baseDir, path string) (string, string, error) {
 	return rel, realPath, nil
 }
 
-func secureGlobMatch(absBase, realBase, match string) (string, bool) {
-	absMatch, err := filepath.Abs(match)
-	if err != nil || !isPathInBase(absBase, absMatch) {
-		return "", false
+func globWalkRoot(absBase, pattern string) string {
+	parts := strings.Split(filepath.FromSlash(pattern), string(filepath.Separator))
+	literal := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part == "**" || strings.ContainsAny(part, "*?[") {
+			break
+		}
+		literal = append(literal, part)
 	}
-	realMatch, err := filepath.EvalSymlinks(absMatch)
-	if err != nil || !isPathInBase(realBase, realMatch) {
-		return "", false
+	root := filepath.Join(append([]string{absBase}, literal...)...)
+	if info, err := os.Stat(root); err == nil && !info.IsDir() {
+		return root
 	}
-	return absMatch, true
+	return root
+}
+
+func matchGlob(pattern, path string) (bool, error) {
+	patternParts := strings.Split(filepath.ToSlash(pattern), "/")
+	pathParts := strings.Split(filepath.ToSlash(path), "/")
+	type state struct{ pattern, path int }
+	memo := make(map[state]bool)
+	seen := make(map[state]bool)
+	var match func(int, int) (bool, error)
+	match = func(pi, si int) (bool, error) {
+		key := state{pattern: pi, path: si}
+		if seen[key] {
+			return memo[key], nil
+		}
+		seen[key] = true
+		if pi == len(patternParts) {
+			memo[key] = si == len(pathParts)
+			return memo[key], nil
+		}
+		if patternParts[pi] == "**" {
+			ok, err := match(pi+1, si)
+			if err != nil || ok {
+				memo[key] = ok
+				return ok, err
+			}
+			if si < len(pathParts) {
+				ok, err = match(pi, si+1)
+				memo[key] = ok
+				return ok, err
+			}
+			return false, nil
+		}
+		if si >= len(pathParts) {
+			return false, nil
+		}
+		ok, err := filepath.Match(patternParts[pi], pathParts[si])
+		if err != nil || !ok {
+			return false, err
+		}
+		ok, err = match(pi+1, si+1)
+		memo[key] = ok
+		return ok, err
+	}
+	return match(0, 0)
 }
 
 // --- glob tool ---
@@ -163,7 +255,7 @@ func (t *globTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 	}, nil
 }
 
-func (t *globTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Option) (string, error) {
+func (t *globTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.Option) (string, error) {
 	var args struct {
 		Pattern string `json:"pattern"`
 		Limit   int    `json:"limit"`
@@ -177,11 +269,17 @@ func (t *globTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 	if args.Pattern == "" {
 		return "", fmt.Errorf("pattern is required")
 	}
+	if len(args.Pattern) > 512 {
+		return "", fmt.Errorf("pattern is too long")
+	}
 	if args.Limit == 0 {
 		args.Limit = 100
 	}
+	if args.Limit < 1 || args.Limit > maxGlobResults {
+		return "", fmt.Errorf("limit must be between 1 and %d", maxGlobResults)
+	}
 
-	_, absPattern, err := secureToolPath(t.baseDir, args.Pattern)
+	_, _, err := secureToolPath(t.baseDir, args.Pattern)
 	if err != nil {
 		return "", err
 	}
@@ -193,50 +291,66 @@ func (t *globTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 	if err != nil {
 		return "", fmt.Errorf("resolve base directory: %w", err)
 	}
+	root := globWalkRoot(absBase, args.Pattern)
 	shouldIgnore := buildShouldIgnore(absBase)
-	prefix := absBase + string(filepath.Separator)
+	results := make([]string, 0, args.Limit)
+	visited := 0
+	truncated := false
 
-	var allMatches []string
-	if strings.Contains(args.Pattern, "**") {
-		allMatches, err = filepathx.Glob(absPattern)
-	} else {
-		allMatches, err = filepath.Glob(absPattern)
-	}
+	err = filepath.Walk(root, func(absPath string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		visited++
+		if visited > maxGlobVisited {
+			truncated = true
+			return filepath.SkipAll
+		}
+		rel := relFromBase(absBase, absPath)
+		if shouldIgnore(rel, info.IsDir()) || isSensitiveToolPath(rel) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		realPath, err := filepath.EvalSymlinks(absPath)
+		if err != nil || !isPathInBase(realBase, realPath) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		matched, err := matchGlob(args.Pattern, rel)
+		if err != nil {
+			return fmt.Errorf("match glob: %w", err)
+		}
+		if !matched {
+			return nil
+		}
+		if info.IsDir() {
+			rel += "/"
+		}
+		results = append(results, rel)
+		if len(results) >= args.Limit {
+			truncated = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
 	if err != nil {
-		return "", fmt.Errorf("glob: %w", err)
+		return "", fmt.Errorf("walk: %w", err)
 	}
-
-	var filtered []string
-	for _, m := range allMatches {
-		absMatch, ok := secureGlobMatch(absBase, realBase, m)
-		if !ok {
-			continue
-		}
-		rel := relFromBase(absBase, absMatch)
-		if strings.HasPrefix(rel, "../") || rel == ".." || filepath.IsAbs(rel) {
-			rel = filepath.ToSlash(strings.TrimPrefix(absMatch, prefix))
-			rel = strings.TrimPrefix(rel, "/")
-		}
-		info, statErr := os.Stat(absMatch)
-		if statErr != nil {
-			continue
-		}
-		isDir := info.IsDir()
-		if !shouldIgnore(rel, isDir) {
-			if isDir {
-				rel += "/"
-			}
-			filtered = append(filtered, rel)
-			if len(filtered) >= args.Limit {
-				break
-			}
-		}
-	}
-
-	if len(filtered) == 0 {
+	if len(results) == 0 {
 		return "no matches found", nil
 	}
-	return strings.Join(filtered, "\n"), nil
+	result := strings.Join(results, "\n")
+	if truncated {
+		result += fmt.Sprintf("\n[glob truncated after %d results or %d visited entries]", len(results), visited)
+	}
+	return result, nil
 }
 
 // --- grep tool ---
@@ -257,7 +371,7 @@ func (t *grepTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 	}, nil
 }
 
-func (t *grepTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Option) (string, error) {
+func (t *grepTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.Option) (string, error) {
 	var args struct {
 		Pattern string `json:"pattern"`
 		Glob    string `json:"glob"`
@@ -275,12 +389,20 @@ func (t *grepTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 	if args.Limit == 0 {
 		args.Limit = 50
 	}
+	if len(args.Pattern) > 512 {
+		return "", fmt.Errorf("pattern is too long")
+	}
+	if args.Limit < 1 || args.Limit > maxGrepResults {
+		return "", fmt.Errorf("limit must be between 1 and %d", maxGrepResults)
+	}
+	if len(args.Glob) > 512 {
+		return "", fmt.Errorf("glob is too long")
+	}
 
 	re, err := regexp.Compile(args.Pattern)
 	if err != nil {
 		return "", fmt.Errorf("compile pattern: %w", err)
 	}
-
 	absBase, err := filepath.Abs(t.baseDir)
 	if err != nil {
 		return "", fmt.Errorf("resolve base directory: %w", err)
@@ -290,28 +412,40 @@ func (t *grepTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 		return "", fmt.Errorf("resolve base directory: %w", err)
 	}
 	shouldIgnore := buildShouldIgnore(absBase)
-	var results []string
+	results := make([]string, 0, args.Limit)
+	filesScanned := 0
+	bytesScanned := int64(0)
+	truncated := false
+	visitedEntries := 0
 
-	err = filepath.Walk(absBase, func(absPath string, info os.FileInfo, err error) error {
-		if err != nil {
+	err = filepath.Walk(absBase, func(absPath string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
 			return nil
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		visitedEntries++
+		if visitedEntries > maxGlobVisited {
+			truncated = true
+			return filepath.SkipAll
+		}
 		rel := relFromBase(absBase, absPath)
-
-		if shouldIgnore(rel, info.IsDir()) {
+		if shouldIgnore(rel, info.IsDir()) || isSensitiveToolPath(rel) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if info.IsDir() {
+		if info.IsDir() || !info.Mode().IsRegular() {
 			return nil
 		}
-		if len(results) >= args.Limit {
+		if len(results) >= args.Limit || filesScanned >= maxGrepFiles || bytesScanned >= maxGrepBytes {
+			truncated = true
 			return filepath.SkipAll
 		}
 		if args.Glob != "" {
-			matched, matchErr := filepath.Match(args.Glob, rel)
+			matched, matchErr := matchGlob(args.Glob, rel)
 			if matchErr != nil {
 				return fmt.Errorf("match glob: %w", matchErr)
 			}
@@ -322,41 +456,62 @@ func (t *grepTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 				}
 			}
 		}
-
+		if info.Size() > maxReadableFileBytes || bytesScanned+info.Size() > maxGrepBytes {
+			truncated = true
+			return nil
+		}
 		realPath, realErr := filepath.EvalSymlinks(absPath)
 		if realErr != nil || !isPathInBase(realBase, realPath) {
 			return nil
 		}
+
 		f, openErr := os.Open(realPath)
 		if openErr != nil {
 			return nil
 		}
-		defer func() {
-			_ = f.Close()
-		}()
-
+		filesScanned++
+		bytesScanned += info.Size()
 		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 64*1024), maxReadableFileBytes)
 		lineNum := 0
 		for scanner.Scan() {
 			lineNum++
 			line := scanner.Text()
 			if re.MatchString(line) {
+				if len(line) > 2048 {
+					line = safeTextPrefix(line, 2048) + "…"
+				}
 				results = append(results, fmt.Sprintf("%s:%d: %s", rel, lineNum, line))
 				if len(results) >= args.Limit {
-					return nil
+					truncated = true
+					break
 				}
 			}
 		}
-		return scanner.Err()
+		scanErr := scanner.Err()
+		_ = f.Close()
+		if scanErr != nil {
+			truncated = true
+		}
+		if len(results) >= args.Limit {
+			return filepath.SkipAll
+		}
+		return nil
 	})
 	if err != nil {
 		return "", fmt.Errorf("walk: %w", err)
 	}
-
 	if len(results) == 0 {
+		if truncated {
+			return fmt.Sprintf("no matches found [search truncated after %d files and %d bytes]", filesScanned, bytesScanned), nil
+		}
 		return "no matches found", nil
 	}
-	return strings.Join(results, "\n"), nil
+	result := strings.Join(results, "\n")
+	if truncated {
+		result += fmt.Sprintf("\n[grep truncated after %d matches, %d files, and %d bytes]", len(results), filesScanned, bytesScanned)
+	}
+	return result, nil
 }
 
 // --- read tool ---
@@ -368,7 +523,7 @@ func NewReadTool(baseDir string) tool.InvokableTool { return &readTool{baseDir: 
 func (t *readTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
 		Name: "read",
-		Desc: "Reads the contents of a file. If the path is a directory, reports that instead of failing. Supports offset (skip lines) and limit (max lines to return).",
+		Desc: "Reads a bounded, line-numbered range from a regular file. Directories are listed directly. Ignored and sensitive paths are unavailable. Results report exact continuation offsets.",
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"path":   {Type: schema.String, Desc: "The path of the file to read.", Required: true},
 			"offset": {Type: schema.Integer, Desc: "Number of lines to skip from the start. Defaults to 0."},
@@ -377,7 +532,7 @@ func (t *readTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 	}, nil
 }
 
-func (t *readTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Option) (string, error) {
+func (t *readTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.Option) (string, error) {
 	var args struct {
 		Path   string `json:"path"`
 		Offset int    `json:"offset"`
@@ -392,54 +547,91 @@ func (t *readTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 	if args.Path == "" {
 		return "", fmt.Errorf("path is required")
 	}
+	if args.Offset < 0 {
+		return "", fmt.Errorf("offset must not be negative")
+	}
 	if args.Limit == 0 {
-		args.Limit = 200
+		args.Limit = maxReadLines
+	}
+	if args.Limit < 1 || args.Limit > maxReadLines {
+		return "", fmt.Errorf("limit must be between 1 and %d", maxReadLines)
 	}
 
-	_, absPath, err := secureExistingToolPath(t.baseDir, args.Path)
+	relPath, absPath, err := secureExistingToolPath(t.baseDir, args.Path)
 	if err != nil {
 		return "", err
 	}
+	relPath = filepath.ToSlash(relPath)
 	info, err := os.Stat(absPath)
 	if err != nil {
 		return "", fmt.Errorf("stat path: %w", err)
 	}
 	if info.IsDir() {
-		return "is a directory", nil
+		return listDirectory(ctx, t.baseDir, relPath, absPath, maxListEntries)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("path is not a regular file")
+	}
+	if isSensitiveToolPath(relPath) || buildShouldIgnore(t.baseDir)(relPath, false) {
+		return "", fmt.Errorf("path is unavailable because it is ignored or sensitive")
+	}
+	if info.Size() > maxReadableFileBytes {
+		return "", fmt.Errorf("file is %d bytes; maximum readable size is %d", info.Size(), maxReadableFileBytes)
 	}
 
 	f, err := os.Open(absPath)
 	if err != nil {
 		return "", fmt.Errorf("open file: %w", err)
 	}
-	defer func() {
-		_ = f.Close()
-	}()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
-	var lines []string
+	scanner.Buffer(make([]byte, 64*1024), maxReadableFileBytes)
+	lines := make([]string, 0, args.Limit)
 	lineNum := 0
+	contentBytes := 0
+	hasMore := false
 	for scanner.Scan() {
-		if lineNum < args.Offset {
-			lineNum++
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		lineNum++
+		if lineNum <= args.Offset {
 			continue
 		}
-		if args.Limit > 0 && len(lines) >= args.Limit {
+		if len(lines) >= args.Limit {
+			hasMore = true
 			break
 		}
-		lines = append(lines, scanner.Text())
-		lineNum++
+		line := fmt.Sprintf("%d:%s", lineNum, scanner.Text())
+		if contentBytes+len(line)+1 > maxReadBytes {
+			remaining := maxReadBytes - contentBytes - len(fmt.Sprintf("%d:", lineNum)) - 1
+			if remaining > 0 {
+				line = fmt.Sprintf("%d:%s…", lineNum, safeTextPrefix(scanner.Text(), remaining))
+				lines = append(lines, line)
+			}
+			hasMore = true
+			break
+		}
+		lines = append(lines, line)
+		contentBytes += len(line) + 1
 	}
 	if err := scanner.Err(); err != nil {
 		return "", fmt.Errorf("scan file: %w", err)
 	}
 	if len(lines) == 0 {
 		if args.Offset > 0 {
-			return "no lines in requested range", nil
+			return fmt.Sprintf("[%s: no lines after offset %d]", relPath, args.Offset), nil
 		}
-		return "empty file", nil
+		return fmt.Sprintf("[%s: empty file]", relPath), nil
 	}
-	return strings.Join(lines, "\n"), nil
+
+	endLine := args.Offset + len(lines)
+	status := "complete"
+	if hasMore {
+		status = fmt.Sprintf("next_offset=%d", endLine)
+	}
+	return fmt.Sprintf("[%s lines %d-%d; %s]\n%s", relPath, args.Offset+1, endLine, status, strings.Join(lines, "\n")), nil
 }
 
 // --- list tool ---
@@ -451,16 +643,18 @@ func NewListTool(baseDir string) tool.InvokableTool { return &listTool{baseDir: 
 func (t *listTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
 		Name: "list",
-		Desc: "Lists directory contents. Directories have a trailing '/'. Returns 'is a file' if the path is a file.",
+		Desc: "Lists bounded directory contents. Directories have a trailing '/'. Reports truncation explicitly.",
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"path": {Type: schema.String, Desc: "The directory path to list.", Required: true},
+			"path":  {Type: schema.String, Desc: "The directory path to list.", Required: true},
+			"limit": {Type: schema.Integer, Desc: "Maximum entries to return. Defaults to and is capped at 200."},
 		}),
 	}, nil
 }
 
-func (t *listTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Option) (string, error) {
+func (t *listTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.Option) (string, error) {
 	var args struct {
-		Path string `json:"path"`
+		Path  string `json:"path"`
+		Limit int    `json:"limit"`
 	}
 	if argsJSON == "" {
 		argsJSON = "{}"
@@ -470,6 +664,12 @@ func (t *listTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 	}
 	if args.Path == "" {
 		return "", fmt.Errorf("path is required")
+	}
+	if args.Limit == 0 {
+		args.Limit = maxListEntries
+	}
+	if args.Limit < 1 || args.Limit > maxListEntries {
+		return "", fmt.Errorf("limit must be between 1 and %d", maxListEntries)
 	}
 
 	relPath, absPath, err := secureExistingToolPath(t.baseDir, args.Path)
@@ -483,20 +683,33 @@ func (t *listTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 	if !info.IsDir() {
 		return "is a file", nil
 	}
+	return listDirectory(ctx, t.baseDir, filepath.ToSlash(relPath), absPath, args.Limit)
+}
 
-	entries, err := os.ReadDir(absPath)
+func listDirectory(ctx context.Context, baseDir, relPath, absPath string, limit int) (string, error) {
+	dir, err := os.Open(absPath)
 	if err != nil {
-		return "", fmt.Errorf("read dir: %w", err)
+		return "", fmt.Errorf("open directory: %w", err)
 	}
-	if len(entries) == 0 {
-		return "empty directory", nil
-	}
+	defer func() { _ = dir.Close() }()
 
-	shouldIgnore := buildShouldIgnore(t.baseDir)
-	var names []string
+	entries, err := dir.ReadDir(maxDirectoryScan + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("read directory: %w", err)
+	}
+	truncated := len(entries) > maxDirectoryScan
+	if truncated {
+		entries = entries[:maxDirectoryScan]
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	shouldIgnore := buildShouldIgnore(baseDir)
+	names := make([]string, 0, min(limit, len(entries)))
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		entryRel := filepath.ToSlash(filepath.Join(relPath, entry.Name()))
-		if shouldIgnore(entryRel, entry.IsDir()) {
+		if shouldIgnore(entryRel, entry.IsDir()) || isSensitiveToolPath(entryRel) {
 			continue
 		}
 		name := entry.Name()
@@ -504,12 +717,30 @@ func (t *listTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 			name += "/"
 		}
 		names = append(names, name)
+		if len(names) >= limit {
+			truncated = true
+			break
+		}
 	}
-
 	if len(names) == 0 {
 		return "empty directory", nil
 	}
-	return strings.Join(names, "\n"), nil
+	result := strings.Join(names, "\n")
+	if truncated {
+		result += fmt.Sprintf("\n[list truncated after %d entries]", len(names))
+	}
+	return result, nil
+}
+
+func safeTextPrefix(value string, maxBytes int) string {
+	if len(value) <= maxBytes {
+		return value
+	}
+	end := maxBytes
+	for end > 0 && !utf8.RuneStart(value[end]) {
+		end--
+	}
+	return value[:end]
 }
 
 // --- tree tool ---
@@ -529,7 +760,7 @@ func (t *treeTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 	}, nil
 }
 
-func (t *treeTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Option) (string, error) {
+func (t *treeTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.Option) (string, error) {
 	var args struct {
 		Path  string `json:"path"`
 		Depth int    `json:"depth"`
@@ -546,6 +777,9 @@ func (t *treeTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 	if args.Depth == 0 {
 		args.Depth = 3
 	}
+	if args.Depth < 1 || args.Depth > maxTreeDepth {
+		return "", fmt.Errorf("depth must be between 1 and %d", maxTreeDepth)
+	}
 
 	_, rootAbs, err := secureExistingToolPath(t.baseDir, args.Path)
 	if err != nil {
@@ -558,17 +792,18 @@ func (t *treeTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 	shouldIgnore := buildShouldIgnore(absBase)
 
 	const maxEntries = 500
-	var lines []string
+	lines := make([]string, 0, maxEntries)
 	truncated := false
 
-	err = filepath.Walk(rootAbs, func(absPath string, info os.FileInfo, err error) error {
-		if err != nil {
+	err = filepath.Walk(rootAbs, func(absPath string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
 			return nil
 		}
-
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		relFromBasePath := relFromBase(absBase, absPath)
-
-		if shouldIgnore(relFromBasePath, info.IsDir()) {
+		if shouldIgnore(relFromBasePath, info.IsDir()) || isSensitiveToolPath(relFromBasePath) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
@@ -580,7 +815,6 @@ func (t *treeTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 		if relFromRoot == "." {
 			return nil
 		}
-
 		depth := strings.Count(relFromRoot, "/")
 		if depth >= args.Depth {
 			if info.IsDir() {
@@ -588,7 +822,6 @@ func (t *treeTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 			}
 			return nil
 		}
-
 		if len(lines) >= maxEntries {
 			truncated = true
 			return filepath.SkipAll
@@ -605,13 +838,12 @@ func (t *treeTool) InvokableRun(_ context.Context, argsJSON string, _ ...tool.Op
 	if err != nil {
 		return "", fmt.Errorf("walk: %w", err)
 	}
-
 	if len(lines) == 0 {
 		return "empty directory", nil
 	}
 	result := strings.Join(lines, "\n")
 	if truncated {
-		result += "\n... (truncated)"
+		result += "\n[tree truncated after 500 entries]"
 	}
 	return result, nil
 }

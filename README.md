@@ -85,9 +85,9 @@ Zeabur plans to improve on this direction:
 
 ```mermaid
 flowchart TD
-    A[Start zbplan CLI] --> B[Parse flags: buildkit-addr, context-dir, variables]
+    A[Start zbplan CLI] --> B[Parse context, network policy, and budgets]
     B --> C[Connect to BuildKit]
-    C --> D[Create Claude Sonnet 4.6 ReAct agent]
+    C --> D[Create the configured ReAct agent]
     D --> E[Register tools]
 
     E --> E1[Project inspection: tree, glob, grep, read, list]
@@ -100,8 +100,8 @@ flowchart TD
 
     F --> G[Agent outputs raw Dockerfile]
     G --> H[Extract Dockerfile content]
-    H --> I[Inject ZEABUR_ENV_* build args / env vars]
-    I --> J[BuildKit build]
+    H --> I[Validate host Dockerfile policy]
+    I --> J[One bounded BuildKit solve]
 
     J -->|success| K[Output Dockerfile]
     J -->|failure| L[Collect BuildKit logs]
@@ -113,12 +113,12 @@ flowchart TD
 
 ## Key Components
 
-- `cmd/zbplan`: CLI entrypoint. Creates a Claude ReAct agent and runs up to 3 iterations of the generate → build → fix loop.
-- `pkg/zbplan`: Agent orchestration and context budgeting. Individual tool results and BuildKit retry logs are capped at 12 KiB in model input; full tool results remain available through `read_tool_output`, and older tool rounds are replaced by retrievable references.
-- `internal/plantools`: Tools exposed to the agent — project file inspection, Dockerfile template fuzzy search, registry image/tag search, and a BuildKit client wrapper.
+- `cmd/zbplan`: CLI entrypoint. Creates the configured ReAct agent and applies explicit model, tool, build, concurrency, and wall-clock budgets.
+- `pkg/zbplan`: Agent orchestration and context budgeting. Individual model-visible tool results and BuildKit retry logs are capped at 12 KiB; full tool results are retained only within a byte-capped store, and older tool rounds become retrievable references.
+- `internal/plantools`: Bounded tools exposed to the agent — project file inspection, Dockerfile template fuzzy search, allowlisted registry image/tag search, and a BuildKit client wrapper.
 - `internal/plantools/dockerfiles`: Built-in Dockerfile templates, currently covering Bun, Deno, FastAPI, Go, Java Gradle, Java Maven, Next.js, Node npm, Node pnpm, Nuxt server, Nuxt static, PHP, Python pip, Python uv, Ruby, Rust, and Static.
-- `lib/registryutil`: Searches Docker Hub / GHCR images and uses fuzzy search to pick tags matching the required version.
-- `lib/builder`: BuildKit builder — handles Dockerfile preprocessing, environment variable injection, build context mounting, and build progress logging.
+- `pkg/registryutil`: Searches Docker Hub / GHCR images and uses fuzzy search to pick tags matching the required version.
+- `pkg/builder`: Enforces Dockerfile policy, build network policy, build context mounting, and build progress reporting.
 
 ## Usage
 
@@ -131,7 +131,11 @@ nix develop --command go run ./cmd/zbplan \
   --context-dir /path/to/project
 ```
 
-Use `--variables KEY=value` to pass environment variables. They are injected after each `FROM` statement in the Dockerfile as `ARG ZEABUR_ENV_*` and a corresponding `ENV`.
+Dockerfile `RUN` networking is disabled by default. Builds whose `RUN` steps must download dependencies require the explicit `--allow-build-network` flag; only enable it for repositories you trust. Runtime secrets and environment variables are intentionally not passed into generated builds.
+
+Host-enforced limits have secure defaults. Use `--max-build-attempts`, `--max-agent-steps`, `--max-model-requests`, `--max-tool-calls`, `--max-parallel-tool-calls`, `--max-retained-tool-output-bytes`, `--max-build-log-bytes`, `--run-timeout`, `--tool-timeout`, and `--build-timeout` to tighten them.
+
+Defaults: 3 build attempts, 16 agent steps per generation, 24 model requests, 24 tool calls, 4 concurrent tool calls, a 15-minute run, 30 seconds per tool, 10 minutes per build, 1 MiB of retained tool data, and 128 KiB of build logs per attempt.
 
 ## Development
 

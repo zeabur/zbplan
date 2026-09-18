@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"os"
 	"path"
-	"slices"
 
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/util/progress/progressui"
@@ -19,9 +17,9 @@ import (
 )
 
 type BuildImageOptions struct {
-	Dockerfile string
-	Context    string
-	Variables  map[string]string
+	Dockerfile  string
+	Context     string
+	NetworkMode string
 }
 
 type Builder interface {
@@ -42,19 +40,15 @@ func NewBuildkitBuilder(buildkitClient *client.Client, logger *slog.Logger) *bui
 }
 
 func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports []client.ExportEntry) error {
-	processor := NewPipelineProcessor()
-	if len(options.Variables) > 0 {
-		keys := slices.Sorted(maps.Keys(options.Variables))
-		processor.Processors = append(processor.Processors, &EnvProcessor{Variables: keys})
-	}
-
-	b.logger.InfoContext(ctx, "🔧 Pre-processing Dockerfile...")
-	dockerfile, err := processor.Process(ctx, options.Dockerfile)
+	networkMode, err := validateBuildPolicy(options.Dockerfile, options.NetworkMode)
 	if err != nil {
-		b.logger.ErrorContext(ctx, "Failed to pre-process dockerfile", slog.Any("error", err))
-		return fmt.Errorf("pre-process dockerfile: %w", err)
+		return fmt.Errorf("validate build policy: %w", err)
 	}
+	dockerfile := options.Dockerfile
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	tempDir, err := os.MkdirTemp("", "zbpack-")
 	if err != nil {
 		b.logger.ErrorContext(ctx, "Failed to create temp dir", slog.Any("error", err))
@@ -82,12 +76,7 @@ func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports 
 		return fmt.Errorf("create dockerfile filesystem: %w", err)
 	}
 
-	frontendAttrs := make(map[string]string, len(options.Variables)+1)
-	frontendAttrs["filename"] = "Dockerfile"
-	for k, v := range options.Variables {
-		frontendAttrs["build-arg:ZEABUR_ENV_"+EncodeArgName(k)] = v
-	}
-
+	frontendAttrs := dockerfileFrontendAttrs(networkMode)
 	solveOpt := client.SolveOpt{
 		LocalMounts: map[string]fsutil.FS{
 			"context":    contextFS,
@@ -124,6 +113,14 @@ func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports 
 	}
 
 	return nil
+}
+
+func dockerfileFrontendAttrs(networkMode string) map[string]string {
+	attrs := map[string]string{"filename": "Dockerfile"}
+	if networkMode == NetworkNone {
+		attrs["force-network-mode"] = NetworkNone
+	}
+	return attrs
 }
 
 // Build runs a BuildKit solve with no exporter. Use this to verify that a

@@ -95,7 +95,7 @@ func (f *finder) cachedTagNames(ctx context.Context, repo name.Repository) ([]st
 		if tagNames, ok := f.tagNamesCache.Get(key); ok {
 			return tagNames, nil
 		}
-		tagNames, err := f.listRemoteTags(context.Background(), repo)
+		tagNames, err := f.listRemoteTags(ctx, repo)
 		if err != nil {
 			return nil, err
 		}
@@ -125,7 +125,7 @@ func (f *finder) cachedCreatedAt(ctx context.Context, repo name.Repository, tagN
 		if createdAt, ok := f.tagCreatedAtCache.Get(key); ok {
 			return createdAt, nil
 		}
-		createdAt, err := f.resolveTagCreatedAt(context.Background(), repo, tagName, plOS, plArch)
+		createdAt, err := f.resolveTagCreatedAt(ctx, repo, tagName, plOS, plArch)
 		if err != nil {
 			return time.Time{}, err
 		}

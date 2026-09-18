@@ -17,7 +17,7 @@ import (
 type ClaudeConfig struct {
 	// APIKey is the Anthropic API key. Required.
 	APIKey string
-	// Model defaults to "claude-sonnet-4-6" when empty.
+	// Model defaults to "claude-sonnet-5" when empty.
 	Model string
 	// BaseURL overrides the Anthropic API endpoint when non-empty.
 	BaseURL string
@@ -33,7 +33,7 @@ type ClaudeConfig struct {
 type OpenAIConfig struct {
 	// APIKey is the OpenAI API key. Required.
 	APIKey string
-	// Model defaults to "gpt-5.5" when empty.
+	// Model defaults to "gpt-5.6-terra" when empty.
 	Model string
 	// BaseURL overrides the OpenAI API endpoint when non-empty.
 	BaseURL string
