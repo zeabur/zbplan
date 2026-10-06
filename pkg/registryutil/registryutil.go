@@ -38,7 +38,9 @@ func NormalizeAllowedRegistries(configured []string) ([]string, error) {
 			continue
 		}
 		parsed, err := name.NewRegistry(registry, name.StrictValidation)
-		if err != nil || parsed.Name() != registry {
+		// go-containerregistry maps docker.io to index.docker.io internally.
+		// Keep the public hostname used by image policy and tool allowlists.
+		if err != nil || (parsed.Name() != registry && registry != RegistryDockerHub) {
 			return nil, fmt.Errorf("invalid registry %q", registry)
 		}
 		if _, ok := seen[registry]; ok {

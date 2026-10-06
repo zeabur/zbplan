@@ -115,6 +115,7 @@ flowchart TD
 
 - `cmd/zbplan`：CLI entrypoint，建立指定模型的 ReAct agent，並限制 model、tool、build、平行數與總執行時間。
 - `pkg/zbplan`：Agent orchestration 與 context budgeting。單次送入模型的 tool result 和 BuildKit retry logs 以 12 KiB 為上限；完整 tool result 只會保留在有總容量限制的 store 裡，且只有原先已被截斷的結果會在較早的 tool rounds 中壓縮成 reference。
+  `read_tool_output` 分頁會保留在模型的對話紀錄中，不會再存入 output store，因此讀取分頁不會擠掉原始結果。
 - `internal/plantools`：提供 agent 有明確工作量上限的專案檔案檢索、Dockerfile template fuzzy search、registry allowlist image/tag search，以及 BuildKit client wrapper。
 - `internal/plantools/dockerfiles`：內建 Dockerfile templates，目前涵蓋 Bun、Deno、FastAPI、Go、Java Gradle、Java Maven、Next.js、Node npm、Node pnpm、Nuxt server、Nuxt static、PHP、Python pip、Python uv、Ruby、Rust、Static。
 - `pkg/registryutil`：搜尋 Docker Hub / GHCR images，並用 fuzzy search 挑出符合版本需求的 tags。

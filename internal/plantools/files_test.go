@@ -147,6 +147,21 @@ func TestGlobToolMarksDirectoriesWithTrailingSlash(t *testing.T) {
 	}
 }
 
+func TestGlobToolReturnsNoMatchesForMissingLiteralRoot(t *testing.T) {
+	baseDir := t.TempDir()
+	for _, pattern := range []string{"src/**/*.go", "src/main.go", "nested/src/*.go"} {
+		t.Run(pattern, func(t *testing.T) {
+			result, err := NewGlobTool(baseDir).InvokableRun(context.Background(), `{"pattern":"`+pattern+`"}`)
+			if err != nil {
+				t.Fatalf("missing glob root returned error: %v", err)
+			}
+			if result != "no matches found" {
+				t.Fatalf("missing glob root returned %q", result)
+			}
+		})
+	}
+}
+
 func TestGlobToolRejectsParentTraversal(t *testing.T) {
 	baseDir := testBaseWithOutsideFile(t)
 

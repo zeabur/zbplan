@@ -146,6 +146,66 @@ func TestReadToolOutputReturnsBoundedUTF8Range(t *testing.T) {
 	}
 }
 
+func TestReadToolOutputPagesDoNotEvictSource(t *testing.T) {
+	const sourceCallID = "source-call"
+	payload := strings.Repeat("0123456789", 2000)
+	store := newToolOutputStore(len(payload) + 128)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	middleware := newToolOutputMiddleware(store, logger)
+	source := middleware.Invokable(func(context.Context, *compose.ToolInput) (*compose.ToolOutput, error) {
+		return &compose.ToolOutput{Result: payload}, nil
+	})
+	if _, err := source(context.Background(), &compose.ToolInput{Name: "read", CallID: sourceCallID, Arguments: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+	ref, ok := store.refForCall(sourceCallID)
+	if !ok {
+		t.Fatal("source output was not retained")
+	}
+	reader := newReadToolOutputTool(store)
+	page := middleware.Invokable(func(ctx context.Context, input *compose.ToolInput) (*compose.ToolOutput, error) {
+		result, err := reader.InvokableRun(ctx, input.Arguments)
+		return &compose.ToolOutput{Result: result}, err
+	})
+	var recovered strings.Builder
+	var messages []*schema.Message
+	for offset := 0; offset < len(payload); offset += maxToolOutputReadBytes {
+		callID := fmt.Sprintf("page-%d", offset)
+		result, err := page(context.Background(), &compose.ToolInput{
+			Name:      "read_tool_output",
+			CallID:    callID,
+			Arguments: fmt.Sprintf(`{"ref":%q,"offset":%d}`, ref, offset),
+		})
+		if err != nil {
+			t.Fatalf("read page at offset %d: %v", offset, err)
+		}
+		_, content, ok := strings.Cut(result.Result, "\n")
+		if !ok {
+			t.Fatalf("page lacks content: %q", result.Result)
+		}
+		recovered.WriteString(content)
+		messages = append(messages,
+			&schema.Message{Role: schema.Assistant, ToolCalls: []schema.ToolCall{{ID: callID}}},
+			&schema.Message{Role: schema.Tool, ToolCallID: callID, Content: result.Result},
+		)
+	}
+	if recovered.String() != payload {
+		t.Fatal("paging did not recover the complete source output")
+	}
+	messages = append(messages, &schema.Message{Role: schema.Assistant, Content: "done"})
+	rewritten := newToolHistoryRewriter(store)(context.Background(), messages)
+	recovered.Reset()
+	for _, message := range rewritten {
+		if message.Role == schema.Tool {
+			_, content, _ := strings.Cut(message.Content, "\n")
+			recovered.WriteString(content)
+		}
+	}
+	if recovered.String() != payload {
+		t.Fatal("paged knowledge was lost from later model input")
+	}
+}
+
 func TestReActAgentCompactsToolOutputBetweenModelCalls(t *testing.T) {
 	store := newToolOutputStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

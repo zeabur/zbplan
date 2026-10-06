@@ -159,7 +159,12 @@ func newToolOutputMiddleware(store *toolOutputStore, logger *slog.Logger) compos
 				}
 
 				resultBytes := len(out.Result)
-				ref := store.saveCall(input.CallID, input.Name, input.Arguments, out.Result)
+				var ref string
+				// Pages already fit the output bound and remain in model history.
+				// Retaining them again could evict the source being paged.
+				if input.Name != "read_tool_output" {
+					ref = store.saveCall(input.CallID, input.Name, input.Arguments, out.Result)
+				}
 				out.Result = boundedToolOutput(out.Result, ref, defaultMaxToolOutputBytes)
 				logger.DebugContext(ctx, "tool result", "name", input.Name, "call_id", input.CallID, "bytes", resultBytes, "retained", ref != "")
 				return out, nil
