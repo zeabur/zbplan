@@ -7,7 +7,7 @@
     { self, ... }@inputs:
 
     let
-      goVersion = 26; # Change this to update the whole stack
+      goVersion = 27; # Change this to update the whole stack
 
       supportedSystems = [
         "x86_64-linux"
@@ -36,11 +36,11 @@
       packages = forEachSupportedSystem (
         { pkgs, ... }:
         {
-          default = pkgs.buildGoModule {
+          default = (pkgs.buildGoModule.override { go = pkgs.go; }) {
             pname = "zbplan";
-            version = "0.3.0";
+            version = "0.3.1";
             src = ./.;
-            vendorHash = "sha256-d1D5omTC4pnya/F/nc/b2RdTcjA5rp5Fe2eik1D2Jyc=";
+            vendorHash = "sha256-mXGGRWsJvA70XYtIZzUwJdX60kBIgGd++ParYvOeIvw=";
             doCheck = false;
           };
         }

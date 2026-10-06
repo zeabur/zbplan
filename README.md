@@ -148,7 +148,7 @@ Run the local security/runtime/cache integration checks with `scripts/test-build
 
 ## Development
 
-This project uses Nix. All Go commands must run inside the dev shell:
+This project uses Nix with Go 1.27.1 for both the dev shell and package build. The Go Dockerfile template uses the same version. All Go commands must run inside the dev shell:
 
 ```bash
 nix develop --command go test ./...

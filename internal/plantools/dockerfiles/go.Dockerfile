@@ -1,6 +1,6 @@
 # keywords: golang
 # description: Go multi-stage build: golang:alpine builder, alpine runtime
-FROM golang:1.24-alpine AS builder
+FROM golang:1.27.1-alpine AS builder
 WORKDIR /app
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=bind,source=go.mod,target=go.mod \

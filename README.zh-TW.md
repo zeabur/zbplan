@@ -140,7 +140,7 @@ Host 會強制套用安全的預設上限。可透過 `--max-build-attempts`、`
 
 ## 開發
 
-這個專案使用 Nix。所有 Go commands 都應該在 dev shell 裡執行：
+這個專案透過 Nix 提供 Go 1.27.1，dev shell、套件建置與 Go Dockerfile template 都使用同一個版本。所有 Go commands 都應該在 dev shell 裡執行：
 
 ```bash
 nix develop --command go test ./...
