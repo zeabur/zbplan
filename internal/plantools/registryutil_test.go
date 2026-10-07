@@ -3,6 +3,7 @@ package plantools_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/zeabur/zbplan/internal/plantools"
@@ -281,5 +282,42 @@ func TestListTags_RejectsInvalidImagePath(t *testing.T) {
 	}
 	if called {
 		t.Fatal("finder was called for an invalid image path")
+	}
+}
+
+func TestListTags_AcceptsReferenceGrammarSeparators(t *testing.T) {
+	t.Parallel()
+
+	f := &mockFinder{
+		tagsFn: func(_ context.Context, _, _, _ string, _ int) ([]registryutil.Tag, error) {
+			return []registryutil.Tag{{Name: "1"}}, nil
+		},
+	}
+	for _, image := range []string{"team/foo__bar", "team/foo--bar", "foo.bar/baz", "ubuntu", "library/ubuntu"} {
+		if _, err := plantools.ListTags(context.Background(), f, nil, "docker.io", image, "1"); err != nil {
+			t.Errorf("%s: %v", image, err)
+		}
+	}
+	for _, image := range []string{"Team/Foo", "team/foo___bar", "team//foo", "team/foo:tag", "/team"} {
+		if _, err := plantools.ListTags(context.Background(), f, nil, "docker.io", image, "1"); err == nil {
+			t.Errorf("%s: expected rejection", image)
+		}
+	}
+}
+
+func TestListTagsToolDescribesAllowedRegistries(t *testing.T) {
+	t.Parallel()
+
+	info, err := plantools.NewListTagsTool([]string{"registry.example.com"}).Info(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := info.ToJSONSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, ok := schema.Properties.Get("registry")
+	if !ok || !strings.Contains(registry.Description, "registry.example.com") || strings.Contains(registry.Description, "docker.io") {
+		t.Fatalf("registry description does not reflect the allowlist: %+v", registry)
 	}
 }

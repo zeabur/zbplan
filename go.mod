@@ -7,6 +7,7 @@ require (
 	github.com/cloudwego/eino v0.9.21
 	github.com/cloudwego/eino-ext/components/model/claude v0.1.26
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
+	github.com/distribution/reference v0.6.0
 	github.com/google/go-containerregistry v0.22.1
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/lithammer/fuzzysearch v1.1.8
@@ -63,7 +64,6 @@ require (
 	github.com/containerd/ttrpc v1.2.10 // indirect
 	github.com/containerd/typeurl/v2 v2.3.0 // indirect
 	github.com/cpuguy83/dockercfg v0.3.2 // indirect
-	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/cli v29.8.2+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.9.9 // indirect
 	github.com/docker/go-connections v0.7.0 // indirect

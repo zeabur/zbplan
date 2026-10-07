@@ -5,17 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
+	"github.com/distribution/reference"
 	"github.com/zeabur/zbplan/pkg/registryutil"
 )
-
-var registryImageRE = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$`)
 
 type listImagesTool struct {
 	finder     registryutil.Finder
@@ -76,6 +74,9 @@ type listTagsTool struct {
 }
 
 func NewListTagsTool(allowedRegistries []string) tool.InvokableTool {
+	if normalized, err := registryutil.NormalizeAllowedRegistries(allowedRegistries); err == nil {
+		allowedRegistries = normalized
+	}
 	return &listTagsTool{
 		finder:            registryutil.NewFinder(),
 		allowedRegistries: slices.Clone(allowedRegistries),
@@ -89,7 +90,7 @@ func (t *listTagsTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"registry": {
 				Type:     schema.String,
-				Desc:     "The registry hosting the image, e.g. 'docker.io', 'ghcr.io', 'quay.io', 'gcr.io'",
+				Desc:     "The registry hosting the image; one of: " + strings.Join(t.allowedRegistries, ", "),
 				Required: true,
 			},
 			"image": {
@@ -119,12 +120,6 @@ func (t *listTagsTool) InvokableRun(ctx context.Context, argsJSON string, _ ...t
 	}
 	if args.Image == "" {
 		return "", fmt.Errorf("image is required")
-	}
-	if len(args.Image) > 255 || !registryImageRE.MatchString(args.Image) {
-		return "", fmt.Errorf("image must be a lowercase registry path")
-	}
-	if len(args.Query) > 128 {
-		return "", fmt.Errorf("query is too long")
 	}
 	result, err := ListTags(ctx, t.finder, t.allowedRegistries, args.Registry, args.Image, args.Query)
 	if err != nil {
@@ -198,8 +193,14 @@ func ListTags(
 	if !slices.Contains(normalized, registry) {
 		return nil, fmt.Errorf("registry %q is not allowed", registry)
 	}
-	if len(image) > 255 || !registryImageRE.MatchString(image) {
-		return nil, fmt.Errorf("image must be a lowercase registry path")
+	// The registry is fixed by the allowlist; the image must be a valid
+	// repository path under it per the distribution reference grammar.
+	if len(image) > 255 {
+		return nil, fmt.Errorf("image is too long")
+	}
+	named, err := reference.ParseNormalizedNamed(registry + "/" + image)
+	if err != nil || !reference.IsNameOnly(named) || reference.Domain(named) != registry {
+		return nil, fmt.Errorf("image must be a lowercase repository path")
 	}
 	if len(query) > 128 {
 		return nil, fmt.Errorf("query is too long")
