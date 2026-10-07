@@ -76,6 +76,8 @@ func (s *toolOutputStore) saveCall(callID, toolName, args, output string) string
 	ref := fmt.Sprintf("out-%d", s.nextRef)
 	entrySize := len(ref) + len(callID) + len(toolName) + len(args) + len(output)
 	if entrySize > s.maxBytes {
+		// Never let a reused call ID point at an earlier result.
+		delete(s.callRefs, callID)
 		return ""
 	}
 	for s.totalBytes+entrySize > s.maxBytes && len(s.order) > 0 {

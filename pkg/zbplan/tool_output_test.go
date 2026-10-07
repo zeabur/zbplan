@@ -333,3 +333,16 @@ func TestToolOutputCatalogKeepsNewestEntriesWithinBudget(t *testing.T) {
 		t.Fatalf("catalog should keep only the newest entry, got %q", catalog)
 	}
 }
+
+func TestToolOutputStoreForgetsReusedCallIDWhenNewResultIsTooLarge(t *testing.T) {
+	store := newToolOutputStore(defaultMaxToolOutputBytes * 2)
+	if ref := store.saveCall("call-1", "read", "{}", strings.Repeat("a", defaultMaxToolOutputBytes+1)); ref == "" {
+		t.Fatal("first result was not retained")
+	}
+	if ref := store.saveCall("call-1", "read", "{}", strings.Repeat("b", defaultMaxToolOutputBytes*3)); ref != "" {
+		t.Fatal("oversized result was retained")
+	}
+	if _, ok := store.callRefs["call-1"]; ok {
+		t.Fatal("reused call ID still points at the earlier result")
+	}
+}

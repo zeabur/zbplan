@@ -140,7 +140,9 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		newReadToolOutputTool(outputStore),
 	}
 	for _, extra := range cfg.ExtraTools {
-		tools = append(tools, extra)
+		// Expose only InvokableTool, so Eino cannot pick a streaming or
+		// enhanced endpoint that the output middleware does not wrap.
+		tools = append(tools, invokableOnly{extra})
 	}
 
 	reactAgent, err := react.NewAgent(ctx, &react.AgentConfig{
@@ -200,6 +202,8 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	return nil, fmt.Errorf("zbplan: dockerfile failed to build after %d attempts; last dockerfile:\n%s",
 		cfg.MaxBuildAttempts, lastDockerfile)
 }
+
+type invokableOnly struct{ tool.InvokableTool }
 
 func withToolCatalog(prompt string, store *toolOutputStore) string {
 	catalog := store.catalog(4 * 1024)
