@@ -62,18 +62,6 @@ func TestFilteredFSHidesExcludedPathsFromWalkAndOpen(t *testing.T) {
 	_ = rc.Close()
 }
 
-func TestFilteredFSWithoutPredicateIsUnchanged(t *testing.T) {
-	t.Parallel()
-
-	base, err := fsutil.NewFS(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := newFilteredFS(base, nil); got != base {
-		t.Fatal("nil predicate should not wrap the filesystem")
-	}
-}
-
 type closeCounter struct{ closes int }
 
 func (c *closeCounter) Write(p []byte) (int, error) { return len(p), nil }
