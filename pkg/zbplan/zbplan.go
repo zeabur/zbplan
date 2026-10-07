@@ -54,15 +54,17 @@ type Config struct {
 	// most implementations (e.g. *os.File silently returns an error that can
 	// be ignored), but is unnecessary.
 	OCIOutput io.WriteCloser
-	// ExtraTools are appended to the default eight plantools tools.
-	ExtraTools []tool.BaseTool
+	// ExtraTools are appended to the default plantools tools. Their results
+	// share the bounded output store. Only invokable tools are accepted
+	// because that is the interface the output middleware wraps.
+	ExtraTools []tool.InvokableTool
 	// SystemPrompt overrides DefaultSystemPrompt.
 	SystemPrompt string
 	// MaxBuildAttempts is the number of agent generate→build cycles before
 	// Run returns an error. Defaults to 3.
 	MaxBuildAttempts int
 	// MaxAgentSteps is the maximum number of ReAct steps per Generate call.
-	// Defaults to 100.
+	// It bounds model requests and tool rounds per attempt. Defaults to 16.
 	MaxAgentSteps int
 	// Logger defaults to slog.Default() when nil.
 	Logger *slog.Logger
@@ -88,11 +90,11 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if cfg.ContextDir == "" {
 		return nil, fmt.Errorf("zbplan: ContextDir is required")
 	}
-	if cfg.MaxBuildAttempts == 0 {
+	if cfg.MaxBuildAttempts <= 0 {
 		cfg.MaxBuildAttempts = 3
 	}
-	if cfg.MaxAgentSteps == 0 {
-		cfg.MaxAgentSteps = 100
+	if cfg.MaxAgentSteps <= 0 {
+		cfg.MaxAgentSteps = 16
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -106,6 +108,8 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, fmt.Errorf("zbplan: create builder client: %w", err)
 	}
 	defer func() { _ = builderClient.Close() }()
+
+	outputStore := newToolOutputStore(maxRetainedToolOutputBytes)
 
 	// Try the caller-supplied Dockerfile first; this doesn't consume an agent attempt.
 	prompt := "Generate the Dockerfile for the codebase in the current directory."
@@ -133,16 +137,22 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		plantools.NewGrepTool(cfg.ContextDir),
 		plantools.NewReadTool(cfg.ContextDir),
 		plantools.NewListTool(cfg.ContextDir),
+		newReadToolOutputTool(outputStore),
 	}
-	tools = append(tools, cfg.ExtraTools...)
+	for _, extra := range cfg.ExtraTools {
+		tools = append(tools, extra)
+	}
 
 	reactAgent, err := react.NewAgent(ctx, &react.AgentConfig{
 		ToolCallingModel: cfg.Model,
 		ToolsConfig: compose.ToolsNodeConfig{
-			Tools:               tools,
-			ToolCallMiddlewares: []compose.ToolMiddleware{newLoggingMiddleware(cfg.Logger)},
+			Tools: tools,
+			ToolCallMiddlewares: []compose.ToolMiddleware{
+				newToolOutputMiddleware(outputStore, cfg.Logger),
+			},
 		},
-		MaxStep: cfg.MaxAgentSteps,
+		MessageRewriter: newToolHistoryRewriter(outputStore),
+		MaxStep:         cfg.MaxAgentSteps,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("zbplan: create agent: %w", err)
@@ -163,7 +173,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		if err != nil {
 			if strings.Contains(err.Error(), "exceeds max steps") {
 				cfg.Logger.WarnContext(ctx, "agent exceeded max steps, retrying with efficiency hint", "attempt", attempt)
-				prompt = efficiencyHintPrompt
+				prompt = withToolCatalog(efficiencyHintPrompt, outputStore)
 				continue
 			}
 			return nil, fmt.Errorf("zbplan: generate dockerfile: %w", err)
@@ -184,30 +194,17 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		}
 
 		cfg.Logger.WarnContext(ctx, "build failed", "attempt", attempt, "error", buildErr)
-		prompt = buildRetryPrompt(dockerfile, buildLogs)
+		prompt = withToolCatalog(buildRetryPrompt(dockerfile, buildLogs), outputStore)
 	}
 
 	return nil, fmt.Errorf("zbplan: dockerfile failed to build after %d attempts; last dockerfile:\n%s",
 		cfg.MaxBuildAttempts, lastDockerfile)
 }
 
-func newLoggingMiddleware(logger *slog.Logger) compose.ToolMiddleware {
-	return compose.ToolMiddleware{
-		Invokable: func(next compose.InvokableToolEndpoint) compose.InvokableToolEndpoint {
-			return func(ctx context.Context, input *compose.ToolInput) (*compose.ToolOutput, error) {
-				logger.DebugContext(ctx, "tool call", "name", input.Name, "args", input.Arguments)
-				out, err := next(ctx, input)
-				if err != nil {
-					logger.ErrorContext(ctx, "tool error", "name", input.Name, "error", err)
-					return nil, err
-				}
-				snippet := out.Result
-				if len(snippet) > 100 {
-					snippet = snippet[:100] + "..."
-				}
-				logger.DebugContext(ctx, "tool result", "name", input.Name, "result", snippet)
-				return out, nil
-			}
-		},
+func withToolCatalog(prompt string, store *toolOutputStore) string {
+	catalog := store.catalog(4 * 1024)
+	if catalog == "" {
+		return prompt
 	}
+	return prompt + "\n\nPrior tool outputs remain available by reference:\n" + catalog
 }

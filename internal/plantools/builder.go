@@ -1,7 +1,6 @@
 package plantools
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -11,6 +10,10 @@ import (
 	slogmulti "github.com/samber/slog-multi"
 	"github.com/zeabur/zbplan/pkg/builder"
 )
+
+// maxBuildLogBytes bounds the BuildKit log retained per build for retry
+// diagnostics.
+const maxBuildLogBytes = 128 << 10
 
 // BuilderClient wraps a BuildKit client and build context for repeated builds.
 type BuilderClient struct {
@@ -41,7 +44,7 @@ func (b *BuilderClient) Close() error {
 // to w. BuildKit closes w during the solve as part of stream finalization;
 // callers do not need to close w after RunBuildOCI returns.
 func (b *BuilderClient) RunBuildOCI(ctx context.Context, dockerfile string, w io.WriteCloser) error {
-	logBuf := &bytes.Buffer{}
+	logBuf := newBoundedLogBuffer(maxBuildLogBytes)
 	logger := slog.New(slogmulti.Fanout(
 		slog.Default().Handler(),
 		slog.NewTextHandler(logBuf, nil),
@@ -65,7 +68,7 @@ func (b *BuilderClient) RunBuildOCI(ctx context.Context, dockerfile string, w io
 // On failure it returns the captured build logs alongside the error.
 // On success it returns empty logs and nil error.
 func (b *BuilderClient) RunBuild(ctx context.Context, dockerfile string) (buildLogs string, err error) {
-	logBuf := &bytes.Buffer{}
+	logBuf := newBoundedLogBuffer(maxBuildLogBytes)
 	logger := slog.New(slogmulti.Fanout(
 		slog.Default().Handler(),
 		slog.NewTextHandler(logBuf, nil),
