@@ -1,6 +1,7 @@
 package plantools
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -396,5 +397,15 @@ func TestFileToolsHidePathsBeneathSensitiveDirectories(t *testing.T) {
 	}
 	if strings.Contains(result, ".env.production") {
 		t.Errorf("grep exposed a hidden path: %q", result)
+	}
+}
+
+func TestReadToolAcceptsMaxSizeFileWithoutTrailingNewline(t *testing.T) {
+	baseDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(baseDir, "big.txt"), bytes.Repeat([]byte("a"), maxReadableFileBytes), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewReadTool(baseDir).InvokableRun(context.Background(), `{"path":"big.txt"}`); err != nil {
+		t.Fatalf("file at the readable-size limit was rejected: %v", err)
 	}
 }

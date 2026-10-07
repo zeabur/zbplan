@@ -424,7 +424,7 @@ func (t *grepTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 		filesScanned++
 		bytesScanned += info.Size()
 		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 64*1024), maxReadableFileBytes)
+		scanner.Buffer(make([]byte, 64*1024), maxReadableFileBytes+1)
 		lineNum := 0
 		for scanner.Scan() {
 			lineNum++
@@ -547,7 +547,7 @@ func (t *readTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), maxReadableFileBytes)
+	scanner.Buffer(make([]byte, 64*1024), maxReadableFileBytes+1)
 	lines := make([]string, 0, args.Limit)
 	lineNum := 0
 	contentBytes := 0
