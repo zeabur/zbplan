@@ -75,7 +75,7 @@ func main() {
 			slog.Error("failed to create oci output file", "path", *ociOut, "error", err)
 			os.Exit(1)
 		}
-		defer func() { _ = f.Close() }()
+		// Run owns and closes OCIOutput.
 		cfg.OCIOutput = f
 	}
 
