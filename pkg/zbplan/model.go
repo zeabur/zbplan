@@ -17,7 +17,7 @@ import (
 type ClaudeConfig struct {
 	// APIKey is the Anthropic API key. Required.
 	APIKey string
-	// Model defaults to "claude-sonnet-4-6" when empty.
+	// Model defaults to "claude-sonnet-5-5" when empty.
 	Model string
 	// BaseURL overrides the Anthropic API endpoint when non-empty.
 	BaseURL string
@@ -33,7 +33,9 @@ type ClaudeConfig struct {
 type OpenAIConfig struct {
 	// APIKey is the OpenAI API key. Required.
 	APIKey string
-	// Model defaults to "gpt-5.5" when empty.
+	// Model defaults to "gpt-5.6-terra" when empty. The adapter uses Chat
+	// Completions, so the model must support tool calling there; newer models
+	// such as gpt-6.1-sol only call tools through the Responses API.
 	Model string
 	// BaseURL overrides the OpenAI API endpoint when non-empty.
 	BaseURL string
@@ -42,7 +44,7 @@ type OpenAIConfig struct {
 // NewClaudeModel returns a Claude tool-calling model from the given config.
 func NewClaudeModel(ctx context.Context, cfg ClaudeConfig) (model.ToolCallingChatModel, error) {
 	if cfg.Model == "" {
-		cfg.Model = "claude-sonnet-5"
+		cfg.Model = "claude-sonnet-5-5"
 	}
 	if cfg.MaxTokens == 0 {
 		cfg.MaxTokens = 16000

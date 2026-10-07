@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/moby/buildkit/frontend/dockerfile/dockerfile2llb"
-	"github.com/moby/buildkit/frontend/dockerui"
 	"github.com/moby/buildkit/solver/pb"
 )
 
@@ -122,7 +121,7 @@ func TestExplicitDockerfileReferences(t *testing.T) {
 	if _, ok := prepared.BuildArgs["UNUSED_SECRET"]; ok {
 		t.Fatal("unreferenced input made public")
 	}
-	result, err := dockerfile2llb.Dockerfile2LLB(t.Context(), []byte(prepared.Dockerfile), dockerfile2llb.ConvertOpt{Config: dockerui.Config{BuildArgs: prepared.BuildArgs}})
+	result, err := dockerfile2llb.Dockerfile2LLB(t.Context(), []byte(prepared.Dockerfile), dockerfile2llb.ConvertOpt{BuildArgs: prepared.BuildArgs})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +185,7 @@ func TestCopyHeredocExpansionAndQuotedLiteral(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := dockerfile2llb.Dockerfile2LLB(t.Context(), []byte(p.Dockerfile), dockerfile2llb.ConvertOpt{Config: dockerui.Config{BuildArgs: p.BuildArgs}})
+	result, err := dockerfile2llb.Dockerfile2LLB(t.Context(), []byte(p.Dockerfile), dockerfile2llb.ConvertOpt{BuildArgs: p.BuildArgs})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +219,7 @@ func TestConfigurationPredicateDoesNotDiscloseItsInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := dockerfile2llb.Dockerfile2LLB(t.Context(), []byte(p.Dockerfile), dockerfile2llb.ConvertOpt{Config: dockerui.Config{BuildArgs: p.BuildArgs}})
+	result, err := dockerfile2llb.Dockerfile2LLB(t.Context(), []byte(p.Dockerfile), dockerfile2llb.ConvertOpt{BuildArgs: p.BuildArgs})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +238,7 @@ func TestMaterializationPreservesLiteralAndPrefixNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := dockerfile2llb.Dockerfile2LLB(t.Context(), []byte(p.Dockerfile), dockerfile2llb.ConvertOpt{Config: dockerui.Config{BuildArgs: p.BuildArgs}})
+	result, err := dockerfile2llb.Dockerfile2LLB(t.Context(), []byte(p.Dockerfile), dockerfile2llb.ConvertOpt{BuildArgs: p.BuildArgs})
 	if err != nil {
 		t.Fatalf("%v\n%s", err, p.Dockerfile)
 	}
@@ -260,7 +259,7 @@ func TestContinuedMountDoesNotRewriteShellReferences(t *testing.T) {
 	if !strings.Contains(p.Dockerfile, "export CACHE_DIR=local; test \"$CACHE_DIR\" = local") {
 		t.Fatal("modified runtime shell substitution")
 	}
-	_, err = dockerfile2llb.Dockerfile2LLB(t.Context(), []byte(p.Dockerfile), dockerfile2llb.ConvertOpt{Config: dockerui.Config{BuildArgs: p.BuildArgs}})
+	_, err = dockerfile2llb.Dockerfile2LLB(t.Context(), []byte(p.Dockerfile), dockerfile2llb.ConvertOpt{BuildArgs: p.BuildArgs})
 	if err != nil {
 		t.Fatalf("continued mount: %v\n%s", err, p.Dockerfile)
 	}
@@ -282,7 +281,7 @@ func TestExposeRetainsWordSplitting(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := dockerfile2llb.Dockerfile2LLB(t.Context(), []byte(p.Dockerfile), dockerfile2llb.ConvertOpt{Config: dockerui.Config{BuildArgs: p.BuildArgs}})
+			result, err := dockerfile2llb.Dockerfile2LLB(t.Context(), []byte(p.Dockerfile), dockerfile2llb.ConvertOpt{BuildArgs: p.BuildArgs})
 			if test.wantError {
 				if err == nil {
 					t.Fatal("quoted multiple ports must remain invalid")

@@ -87,7 +87,7 @@ Zeabur plans to improve on this direction:
 flowchart TD
     A[Start zbplan CLI] --> B[Parse flags: buildkit-addr, context-dir, variables]
     B --> C[Connect to BuildKit]
-    C --> D[Create Claude Sonnet 4.6 ReAct agent]
+    C --> D[Create the configured ReAct agent]
     D --> E[Register tools]
 
     E --> E1[Project inspection: tree, glob, grep, read, list]
@@ -116,8 +116,8 @@ flowchart TD
 - `cmd/zbplan`: CLI entrypoint. Creates a Claude ReAct agent and runs up to 3 iterations of the generate → build → fix loop.
 - `internal/plantools`: Tools exposed to the agent — project file inspection, Dockerfile template fuzzy search, registry image/tag search, and a BuildKit client wrapper.
 - `internal/plantools/dockerfiles`: Built-in Dockerfile templates, currently covering Bun, Deno, FastAPI, Go, Java Gradle, Java Maven, Next.js, Node npm, Node pnpm, Nuxt server, Nuxt static, PHP, Python pip, Python uv, Ruby, Rust, and Static.
-- `lib/registryutil`: Searches Docker Hub / GHCR images and uses fuzzy search to pick tags matching the required version.
-- `lib/builder`: BuildKit builder — handles Dockerfile preprocessing, environment variable injection, build context mounting, and build progress logging.
+- `pkg/registryutil`: Searches Docker Hub / GHCR images and uses fuzzy search to pick tags matching the required version.
+- `pkg/builder`: BuildKit builder — handles Dockerfile preprocessing, environment variable injection, build context mounting, and build progress logging.
 
 ## Usage
 
@@ -156,7 +156,7 @@ start an isolated pinned BuildKit container, and remove that container afterward
 
 ## Development
 
-This project uses Nix. All Go commands must run inside the dev shell:
+This project uses Nix with Go 1.27.1 for both the dev shell and package build. The Go Dockerfile template uses the same version. All Go commands must run inside the dev shell:
 
 ```bash
 nix develop --command go test ./...
