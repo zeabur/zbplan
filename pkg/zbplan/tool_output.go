@@ -44,13 +44,9 @@ type toolOutputStore struct {
 // read_tool_output across one run.
 const maxRetainedToolOutputBytes = 1 << 20
 
-func newToolOutputStore(maxBytes ...int) *toolOutputStore {
-	limit := maxRetainedToolOutputBytes
-	if len(maxBytes) > 0 {
-		limit = maxBytes[0]
-	}
+func newToolOutputStore(maxBytes int) *toolOutputStore {
 	return &toolOutputStore{
-		maxBytes:         limit,
+		maxBytes:         maxBytes,
 		outputs:          make(map[string]storedToolOutput),
 		callRefs:         make(map[string]string),
 		compactableCalls: make(map[string]struct{}),

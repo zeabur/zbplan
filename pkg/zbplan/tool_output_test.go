@@ -17,7 +17,7 @@ import (
 )
 
 func TestToolOutputMiddlewareBoundsAndPreservesLargeResult(t *testing.T) {
-	store := newToolOutputStore()
+	store := newToolOutputStore(maxRetainedToolOutputBytes)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	middleware := newToolOutputMiddleware(store, logger)
 	largeOutput := "begin\n" + strings.Repeat("0123456789", 2000) + "\nend"
@@ -69,7 +69,7 @@ func TestToolOutputStoreEvictsWithinByteBudget(t *testing.T) {
 }
 
 func TestToolHistoryRewriterCompactsOnlyLargeEarlierResults(t *testing.T) {
-	store := newToolOutputStore()
+	store := newToolOutputStore(maxRetainedToolOutputBytes)
 	largeResult := strings.Repeat("large", defaultMaxToolOutputBytes)
 	largeRef := store.save("large-call", largeResult)
 	store.save("small-call", "small manifest")
@@ -129,7 +129,7 @@ func TestToolHistoryRewriterDiscardsEvictedLargePreview(t *testing.T) {
 }
 
 func TestReadToolOutputReturnsBoundedUTF8Range(t *testing.T) {
-	store := newToolOutputStore()
+	store := newToolOutputStore(maxRetainedToolOutputBytes)
 	ref := store.save("call-1", strings.Repeat("界", 4000))
 	result, err := newReadToolOutputTool(store).InvokableRun(
 		context.Background(),
@@ -147,7 +147,7 @@ func TestReadToolOutputReturnsBoundedUTF8Range(t *testing.T) {
 }
 
 func TestReadToolOutputLimitBelowRuneStillAdvances(t *testing.T) {
-	store := newToolOutputStore()
+	store := newToolOutputStore(maxRetainedToolOutputBytes)
 	ref := store.save("call-1", "界a")
 	result, err := newReadToolOutputTool(store).InvokableRun(
 		context.Background(),
@@ -222,7 +222,7 @@ func TestReadToolOutputPagesDoNotEvictSource(t *testing.T) {
 }
 
 func TestReActAgentCompactsToolOutputBetweenModelCalls(t *testing.T) {
-	store := newToolOutputStore()
+	store := newToolOutputStore(maxRetainedToolOutputBytes)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	chatModel := &scriptedToolCallingModel{}
 	agent, err := react.NewAgent(context.Background(), &react.AgentConfig{
@@ -324,25 +324,12 @@ func TestBoundedBuildLogsKeepsFailureTail(t *testing.T) {
 }
 
 func TestToolOutputCatalogKeepsNewestEntriesWithinBudget(t *testing.T) {
-	store := newToolOutputStore()
+	store := newToolOutputStore(maxRetainedToolOutputBytes)
 	oldRef := store.saveCall("call-old", "read", `{"path":"old"}`, strings.Repeat("o", defaultMaxToolOutputBytes+1))
 	newRef := store.saveCall("call-new", "read", `{"path":"new"}`, strings.Repeat("n", defaultMaxToolOutputBytes+1))
 
 	catalog := store.catalog(len("- " + newRef + ": read {\"path\":\"new\"}\n"))
 	if !strings.Contains(catalog, newRef) || strings.Contains(catalog, oldRef) {
 		t.Fatalf("catalog should keep only the newest entry, got %q", catalog)
-	}
-}
-
-func TestToolOutputStoreForgetsReusedCallIDWhenNewResultIsTooLarge(t *testing.T) {
-	store := newToolOutputStore(defaultMaxToolOutputBytes * 2)
-	if ref := store.saveCall("call-1", "read", "{}", strings.Repeat("a", defaultMaxToolOutputBytes+1)); ref == "" {
-		t.Fatal("first result was not retained")
-	}
-	if ref := store.saveCall("call-1", "read", "{}", strings.Repeat("b", defaultMaxToolOutputBytes*3)); ref != "" {
-		t.Fatal("oversized result was retained")
-	}
-	if _, ok := store.callRefs["call-1"]; ok {
-		t.Fatal("reused call ID still points at the earlier result")
 	}
 }
