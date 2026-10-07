@@ -44,7 +44,8 @@ type Config struct {
 	UserDockerfile string
 	// OCIOutput receives the OCI image tarball from the same BuildKit solve
 	// that verifies the successful Dockerfile. Failed attempts write only to
-	// temporary files, so retries do not corrupt this output.
+	// temporary files, so retries do not corrupt this output. Set TMPDIR to
+	// place that spool on a filesystem large enough for the image.
 	//
 	// io.WriteCloser is required because Close carries real semantics:
 	// wrapping formats such as gzip or zstd write closing blocks, and an
@@ -52,7 +53,9 @@ type Config struct {
 	OCIOutput io.WriteCloser
 	// ExtraTools are appended to the default plantools tools. They share the
 	// same call, concurrency, timeout, logging, and output-retention budgets.
-	ExtraTools []tool.BaseTool
+	// Only invokable tools are accepted because the budgets wrap that
+	// interface; streaming and enhanced tools would bypass them.
+	ExtraTools []tool.InvokableTool
 	// SystemPrompt overrides DefaultSystemPrompt.
 	SystemPrompt string
 	// Limits bounds work for this run. Zero-valued fields use DefaultLimits.
@@ -200,7 +203,9 @@ func Run(ctx context.Context, cfg Config) (result *Result, err error) {
 		plantools.NewListTool(cfg.ContextDir),
 		newReadToolOutputTool(outputStore),
 	)
-	tools = append(tools, cfg.ExtraTools...)
+	for _, extra := range cfg.ExtraTools {
+		tools = append(tools, extra)
+	}
 
 	reactAgent, err := react.NewAgent(ctx, &react.AgentConfig{
 		ToolCallingModel: budgetedModel,

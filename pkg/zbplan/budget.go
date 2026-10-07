@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"sync/atomic"
 	"time"
 
@@ -98,43 +97,6 @@ func (b *toolBudget) middleware() compose.ToolMiddleware {
 				}
 				defer release()
 				return next(ctx, input)
-			}
-		},
-		Streamable: func(next compose.StreamableToolEndpoint) compose.StreamableToolEndpoint {
-			return func(ctx context.Context, input *compose.ToolInput) (*compose.StreamToolOutput, error) {
-				ctx, release, err := b.begin(ctx)
-				if err != nil {
-					return nil, err
-				}
-				output, err := next(ctx, input)
-				if err != nil {
-					release()
-					return nil, err
-				}
-				if output == nil || output.Result == nil {
-					release()
-					return nil, fmt.Errorf("streaming tool %q returned no result", input.Name)
-				}
-
-				reader, writer := schema.Pipe[string](1)
-				go func() {
-					defer release()
-					defer output.Result.Close()
-					defer writer.Close()
-					for {
-						chunk, recvErr := output.Result.Recv()
-						if recvErr != nil {
-							if !errors.Is(recvErr, io.EOF) {
-								writer.Send("", recvErr)
-							}
-							return
-						}
-						if writer.Send(chunk, nil) {
-							return
-						}
-					}
-				}()
-				return &compose.StreamToolOutput{Result: reader}, nil
 			}
 		},
 	}

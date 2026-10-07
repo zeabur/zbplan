@@ -56,32 +56,3 @@ func TestLimitsRejectNegativeValues(t *testing.T) {
 		t.Fatal("expected negative limit rejection")
 	}
 }
-
-func TestToolBudgetHoldsConcurrencySlotForStreamingTool(t *testing.T) {
-	t.Parallel()
-
-	finish := make(chan struct{})
-	defer close(finish)
-	budget := newToolBudget(2, 1, time.Second)
-	endpoint := budget.middleware().Streamable(func(context.Context, *compose.ToolInput) (*compose.StreamToolOutput, error) {
-		reader, writer := schema.Pipe[string](1)
-		go func() {
-			defer writer.Close()
-			writer.Send("chunk", nil)
-			<-finish
-		}()
-		return &compose.StreamToolOutput{Result: reader}, nil
-	})
-
-	first, err := endpoint(context.Background(), &compose.ToolInput{Name: "stream"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer first.Result.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	if _, err := endpoint(ctx, &compose.ToolInput{Name: "blocked"}); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("expected second stream to wait for concurrency slot, got %v", err)
-	}
-}
