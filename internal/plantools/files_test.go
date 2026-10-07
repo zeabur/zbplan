@@ -360,3 +360,25 @@ func testBaseAndOutsideFile(t *testing.T) (string, string) {
 func containsLine(lines []string, want string) bool {
 	return slices.Contains(lines, want)
 }
+
+func TestFileToolsHidePathsBeneathSensitiveDirectories(t *testing.T) {
+	baseDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(baseDir, ".env.production"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baseDir, ".env.production", "token"), []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(".env.production", "token"), filepath.Join(baseDir, "token-link")); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{".env.production/token", "token-link"} {
+		if _, err := NewReadTool(baseDir).InvokableRun(context.Background(), `{"path":"`+path+`"}`); err == nil {
+			t.Errorf("read %s: expected unavailable path", path)
+		}
+	}
+	if _, err := NewListTool(baseDir).InvokableRun(context.Background(), `{"path":".env.production"}`); err == nil {
+		t.Error("list .env.production: expected unavailable path")
+	}
+}

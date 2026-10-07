@@ -103,10 +103,12 @@ func secureExistingToolPath(baseDir, path string) (string, string, error) {
 	return rel, realPath, nil
 }
 
+// unavailableExistingToolPath applies the workspace visibility rule, which
+// also checks every parent directory, to both the requested path and its
+// resolved symlink target.
 func unavailableExistingToolPath(baseDir, requestedRel, resolvedAbs string, isDir bool) (bool, error) {
-	shouldIgnore := workspace.IgnoreMatcher(baseDir)
-	requestedRel = filepath.ToSlash(requestedRel)
-	if workspace.IsSensitive(requestedRel) || shouldIgnore(requestedRel, isDir) {
+	hidden := workspace.HiddenMatcher(baseDir)
+	if hidden(filepath.ToSlash(requestedRel), isDir) {
 		return true, nil
 	}
 
@@ -122,8 +124,7 @@ func unavailableExistingToolPath(baseDir, requestedRel, resolvedAbs string, isDi
 	if err != nil || !isPathInBase(realBase, resolvedAbs) {
 		return false, errPathEscapesBase
 	}
-	resolvedRel = filepath.ToSlash(resolvedRel)
-	return workspace.IsSensitive(resolvedRel) || shouldIgnore(resolvedRel, isDir), nil
+	return hidden(filepath.ToSlash(resolvedRel), isDir), nil
 }
 
 func globWalkRoot(absBase, pattern string) string {
@@ -292,6 +293,9 @@ func (t *globTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 		return "", fmt.Errorf("walk: %w", err)
 	}
 	if len(results) == 0 {
+		if truncated {
+			return fmt.Sprintf("no matches found [glob truncated after %d visited entries]", visited), nil
+		}
 		return "no matches found", nil
 	}
 	result := strings.Join(results, "\n")
@@ -657,6 +661,13 @@ func (t *listTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 	info, err := os.Stat(absPath)
 	if err != nil {
 		return "", fmt.Errorf("stat path: %w", err)
+	}
+	unavailable, err := unavailableExistingToolPath(t.baseDir, relPath, absPath, info.IsDir())
+	if err != nil {
+		return "", err
+	}
+	if unavailable {
+		return "", fmt.Errorf("path is unavailable because it is ignored or sensitive")
 	}
 	if !info.IsDir() {
 		return "is a file", nil

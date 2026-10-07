@@ -57,8 +57,10 @@ func IsSensitive(relPath string) bool {
 }
 
 // IgnoreMatcher returns a predicate for the default ignored directories and
-// the bounded root .gitignore of baseDir. Paths are slash-separated and
-// relative to baseDir.
+// the root .gitignore of baseDir. Paths are slash-separated and relative to
+// baseDir. Parsing is bounded but never fails open: an oversized file
+// contributes the rules in its first maxIgnoreFileBytes, and an invalid line
+// is skipped without discarding the others.
 func IgnoreMatcher(baseDir string) func(relPath string, isDir bool) bool {
 	patterns := make([]string, 0, len(DefaultIgnoredDirs))
 	for _, dir := range DefaultIgnoredDirs {
@@ -67,14 +69,23 @@ func IgnoreMatcher(baseDir string) func(relPath string, isDir bool) bool {
 	if ignoreFile, err := os.Open(filepath.Join(baseDir, ".gitignore")); err == nil {
 		data, readErr := io.ReadAll(io.LimitReader(ignoreFile, maxIgnoreFileBytes+1))
 		_ = ignoreFile.Close()
-		if readErr == nil && len(data) <= maxIgnoreFileBytes {
+		if readErr == nil {
+			if len(data) > maxIgnoreFileBytes {
+				// Drop the line cut off by the size bound.
+				data = data[:max(strings.LastIndexByte(string(data[:maxIgnoreFileBytes]), '\n'), 0)]
+			}
 			for line := range strings.SplitSeq(string(data), "\n") {
 				line = strings.TrimSpace(line)
-				if line != "" && !strings.HasPrefix(line, "#") {
-					patterns = append(patterns, gitignorePattern(line))
-					if len(patterns) >= maxIgnorePatterns {
-						break
-					}
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+				pattern := gitignorePattern(line)
+				if _, err := patternmatcher.New([]string{pattern}); err != nil {
+					continue
+				}
+				patterns = append(patterns, pattern)
+				if len(patterns) >= maxIgnorePatterns {
+					break
 				}
 			}
 		}
@@ -82,20 +93,9 @@ func IgnoreMatcher(baseDir string) func(relPath string, isDir bool) bool {
 
 	pm, err := patternmatcher.New(patterns)
 	if err != nil {
-		ignored := make(map[string]bool, len(DefaultIgnoredDirs))
-		for _, d := range DefaultIgnoredDirs {
-			ignored[d] = true
-		}
-		return func(relPath string, _ bool) bool {
-			for part := range strings.SplitSeq(filepath.ToSlash(relPath), "/") {
-				if ignored[part] {
-					return true
-				}
-			}
-			return false
-		}
+		// Every pattern was validated above; fail closed if that changes.
+		return func(relPath string, _ bool) bool { return relPath != "." && relPath != "" }
 	}
-
 	return func(relPath string, _ bool) bool {
 		if relPath == "." || relPath == "" {
 			return false
