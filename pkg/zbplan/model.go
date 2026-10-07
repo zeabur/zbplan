@@ -33,7 +33,9 @@ type ClaudeConfig struct {
 type OpenAIConfig struct {
 	// APIKey is the OpenAI API key. Required.
 	APIKey string
-	// Model defaults to "gpt-6.1-sol" when empty.
+	// Model defaults to "gpt-5.6-terra" when empty. The adapter uses Chat
+	// Completions, so the model must support tool calling there; newer models
+	// such as gpt-6.1-sol only call tools through the Responses API.
 	Model string
 	// BaseURL overrides the OpenAI API endpoint when non-empty.
 	BaseURL string
@@ -69,7 +71,7 @@ func NewClaudeModel(ctx context.Context, cfg ClaudeConfig) (model.ToolCallingCha
 // NewOpenAIModel returns an OpenAI tool-calling model from the given config.
 func NewOpenAIModel(ctx context.Context, cfg OpenAIConfig) (model.ToolCallingChatModel, error) {
 	if cfg.Model == "" {
-		cfg.Model = "gpt-6.1-sol"
+		cfg.Model = "gpt-5.6-terra"
 	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = "https://api.openai.com/v1"
