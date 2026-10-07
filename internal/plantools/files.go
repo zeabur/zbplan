@@ -241,7 +241,7 @@ func (t *globTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 		return "", fmt.Errorf("resolve base directory: %w", err)
 	}
 	root := globWalkRoot(absBase, args.Pattern)
-	shouldIgnore := workspace.IgnoreMatcher(absBase)
+	hidden := workspace.HiddenMatcher(absBase)
 	results := make([]string, 0, args.Limit)
 	visited := 0
 	truncated := false
@@ -259,7 +259,7 @@ func (t *globTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 			return filepath.SkipAll
 		}
 		rel := relFromBase(absBase, absPath)
-		if shouldIgnore(rel, info.IsDir()) || workspace.IsSensitive(rel) {
+		if hidden(rel, info.IsDir()) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
@@ -363,7 +363,7 @@ func (t *grepTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 	if err != nil {
 		return "", fmt.Errorf("resolve base directory: %w", err)
 	}
-	shouldIgnore := workspace.IgnoreMatcher(absBase)
+	hidden := workspace.HiddenMatcher(absBase)
 	results := make([]string, 0, args.Limit)
 	filesScanned := 0
 	bytesScanned := int64(0)
@@ -383,7 +383,7 @@ func (t *grepTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 			return filepath.SkipAll
 		}
 		rel := relFromBase(absBase, absPath)
-		if shouldIgnore(rel, info.IsDir()) || workspace.IsSensitive(rel) {
+		if hidden(rel, info.IsDir()) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
@@ -691,14 +691,14 @@ func listDirectory(ctx context.Context, baseDir, relPath, absPath string, limit 
 		entries = entries[:maxDirectoryScan]
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	shouldIgnore := workspace.IgnoreMatcher(baseDir)
+	hidden := workspace.HiddenMatcher(baseDir)
 	names := make([]string, 0, min(limit, len(entries)))
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
 		entryRel := filepath.ToSlash(filepath.Join(relPath, entry.Name()))
-		if shouldIgnore(entryRel, entry.IsDir()) || workspace.IsSensitive(entryRel) {
+		if hidden(entryRel, entry.IsDir()) {
 			continue
 		}
 		name := entry.Name()
@@ -712,6 +712,9 @@ func listDirectory(ctx context.Context, baseDir, relPath, absPath string, limit 
 		}
 	}
 	if len(names) == 0 {
+		if truncated {
+			return fmt.Sprintf("no visible entries [list truncated after scanning %d entries]", maxDirectoryScan), nil
+		}
 		return "empty directory", nil
 	}
 	result := strings.Join(names, "\n")
@@ -778,7 +781,7 @@ func (t *treeTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 	if err != nil {
 		return "", fmt.Errorf("resolve base directory: %w", err)
 	}
-	shouldIgnore := workspace.IgnoreMatcher(absBase)
+	hidden := workspace.HiddenMatcher(absBase)
 
 	const maxEntries = 500
 	lines := make([]string, 0, maxEntries)
@@ -792,7 +795,7 @@ func (t *treeTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 			return err
 		}
 		relFromBasePath := relFromBase(absBase, absPath)
-		if shouldIgnore(relFromBasePath, info.IsDir()) || workspace.IsSensitive(relFromBasePath) {
+		if hidden(relFromBasePath, info.IsDir()) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}

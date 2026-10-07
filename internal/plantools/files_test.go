@@ -381,4 +381,20 @@ func TestFileToolsHidePathsBeneathSensitiveDirectories(t *testing.T) {
 	if _, err := NewListTool(baseDir).InvokableRun(context.Background(), `{"path":".env.production"}`); err == nil {
 		t.Error("list .env.production: expected unavailable path")
 	}
+	for _, pattern := range []string{".env.production/token", ".env.production/*", "**/token"} {
+		result, err := NewGlobTool(baseDir).InvokableRun(context.Background(), `{"pattern":"`+pattern+`"}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(result, ".env.production") {
+			t.Errorf("glob %s exposed a hidden path: %q", pattern, result)
+		}
+	}
+	result, err := NewGrepTool(baseDir).InvokableRun(context.Background(), `{"pattern":"secret"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(result, ".env.production") {
+		t.Errorf("grep exposed a hidden path: %q", result)
+	}
 }
