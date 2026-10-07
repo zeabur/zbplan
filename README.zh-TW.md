@@ -87,7 +87,7 @@ Zeabur 打算基於這個方向做出改進：
 flowchart TD
     A[啟動 zbplan CLI] --> B[讀取 flags: buildkit-addr, context-dir, variables]
     B --> C[連線 BuildKit]
-    C --> D[建立 Claude Sonnet 4.6 ReAct agent]
+    C --> D[建立指定模型的 ReAct agent]
     D --> E[註冊 tools]
 
     E --> E1[專案檢索: tree, glob, grep, read, list]
@@ -116,8 +116,8 @@ flowchart TD
 - `cmd/zbplan`: CLI entrypoint，建立 Claude ReAct agent，執行最多 3 次的「生成 Dockerfile → BuildKit 編譯 → 失敗修正」迴圈。
 - `internal/plantools`: 提供 agent 可呼叫的工具，包括專案檔案檢索、Dockerfile template fuzzy search、registry image/tag search，以及 BuildKit client wrapper。
 - `internal/plantools/dockerfiles`: 內建 Dockerfile templates，目前涵蓋 Bun、Deno、FastAPI、Go、Java Gradle、Java Maven、Next.js、Node npm、Node pnpm、PHP、Python pip、Python uv、Ruby、Rust、Static。
-- `lib/registryutil`: 搜尋 Docker Hub / GHCR images，並用 fuzzy search 挑出符合版本需求的 tags。
-- `lib/builder`: BuildKit builder，負責 Dockerfile 前處理、環境變數注入、build context 掛載與 build progress logging。
+- `pkg/registryutil`: 搜尋 Docker Hub / GHCR images，並用 fuzzy search 挑出符合版本需求的 tags。
+- `pkg/builder`: BuildKit builder，負責 Dockerfile 前處理、環境變數注入、build context 掛載與 build progress logging。
 
 ## 使用方式
 
@@ -134,7 +134,7 @@ nix develop --command go run ./cmd/zbplan \
 
 ## 開發
 
-這個專案使用 Nix。所有 Go commands 都應該在 dev shell 裡執行：
+這個專案透過 Nix 提供 Go 1.27.1，dev shell、套件建置與 Go Dockerfile template 都使用同一個版本。所有 Go commands 都應該在 dev shell 裡執行：
 
 ```bash
 nix develop --command go test ./...
