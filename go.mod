@@ -16,6 +16,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/tonistiigi/fsutil v0.0.0-20260819142231-83cac42c1c52
 	golang.org/x/sync v0.23.0
+	resenje.org/singleflight v0.4.3
 )
 
 require (

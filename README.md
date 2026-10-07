@@ -156,6 +156,8 @@ Run the local security/runtime/cache integration checks with
 `scripts/test-build-env.sh`. They use dummy credentials and a local HTTP server,
 start an isolated pinned BuildKit container, and remove that container afterward.
 
+Use `--allowed-registries` to replace the default image registry allowlist (`docker.io`, `ghcr.io`, `quay.io`, `gcr.io`). Image search and tag lookup only contact allowed registries.
+
 ## Development
 
 This project uses Nix with Go 1.27.1 for both the dev shell and package build. The Go Dockerfile template uses the same version. All Go commands must run inside the dev shell:

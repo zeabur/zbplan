@@ -3,6 +3,7 @@ package registryutil
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -121,4 +122,48 @@ func mustRepository(t *testing.T, ref string) name.Repository {
 		t.Fatalf("name.NewRepository(%q): %v", ref, err)
 	}
 	return repo
+}
+
+func TestCachedTagNames_FirstCallerCancellationDoesNotFailOthers(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startOnce sync.Once
+	f := NewFinder(WithListRemoteTags(func(ctx context.Context, _ name.Repository) ([]string, error) {
+		startOnce.Do(func() { close(started) })
+		select {
+		case <-release:
+			return []string{"noble"}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})).(*finder)
+	repo := mustRepository(t, "docker.io/library/ubuntu")
+
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := f.cachedTagNames(firstCtx, repo)
+		firstDone <- err
+	}()
+	<-started
+
+	secondDone := make(chan error, 1)
+	go func() {
+		tags, err := f.cachedTagNames(context.Background(), repo)
+		if err == nil && (len(tags) != 1 || tags[0] != "noble") {
+			err = errors.New("unexpected tags")
+		}
+		secondDone <- err
+	}()
+	// Let the second caller join the in-flight lookup before the first leaves.
+	time.Sleep(50 * time.Millisecond)
+
+	cancelFirst()
+	if err := <-firstDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("first caller error = %v, want context.Canceled", err)
+	}
+	close(release)
+	if err := <-secondDone; err != nil {
+		t.Fatalf("second caller failed after first caller canceled: %v", err)
+	}
 }

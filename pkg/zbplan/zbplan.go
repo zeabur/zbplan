@@ -14,6 +14,7 @@ import (
 	"github.com/cloudwego/eino/flow/agent/react"
 	"github.com/cloudwego/eino/schema"
 	"github.com/zeabur/zbplan/internal/plantools"
+	"github.com/zeabur/zbplan/pkg/registryutil"
 )
 
 // Config controls a single Run invocation.
@@ -29,6 +30,9 @@ type Config struct {
 
 	// ContextDir is the source-code directory to plan for.
 	ContextDir string
+	// AllowedRegistries replaces the default image registry allowlist when
+	// non-empty. The defaults are docker.io, ghcr.io, quay.io, and gcr.io.
+	AllowedRegistries []string
 
 	// Variables are build-time inputs supplied to RUN via secret environment mounts.
 	// They do not become image runtime defaults. Explicit Dockerfile metadata
@@ -99,8 +103,18 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	var err error
+	cfg.AllowedRegistries, err = registryutil.NormalizeAllowedRegistries(cfg.AllowedRegistries)
+	if err != nil {
+		return nil, fmt.Errorf("zbplan: invalid allowed registries: %w", err)
+	}
+	searchableRegistries := registryutil.SearchableRegistries(cfg.AllowedRegistries)
 	if cfg.SystemPrompt == "" {
-		cfg.SystemPrompt = DefaultSystemPrompt
+		cfg.SystemPrompt = DefaultSystemPrompt +
+			"\n\nAllowed image registries for this run: " + strings.Join(cfg.AllowedRegistries, ", ") + "."
+		if len(searchableRegistries) == 0 {
+			cfg.SystemPrompt += " Image search (list_images) is unavailable for these registries; use list_tags with known image names."
+		}
 	}
 
 	builderClient, err := plantools.NewBuilderClient(ctx, cfg.BuildKitAddr, cfg.ContextDir, cfg.Variables)
@@ -128,17 +142,21 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		prompt = buildRetryPrompt(cfg.UserDockerfile, buildLogs)
 	}
 
-	tools := []tool.BaseTool{
-		plantools.NewGetDockerfileTemplateTool(),
-		plantools.NewListImagesTool(),
-		plantools.NewListTagsTool(),
+	tools := []tool.BaseTool{plantools.NewGetDockerfileTemplateTool()}
+	// Image search only exists for some registries; offer it only when one of
+	// them is allowed, so search never contacts a registry outside the list.
+	if len(searchableRegistries) > 0 {
+		tools = append(tools, plantools.NewListImagesTool(searchableRegistries))
+	}
+	tools = append(tools,
+		plantools.NewListTagsTool(cfg.AllowedRegistries),
 		plantools.NewTreeTool(cfg.ContextDir),
 		plantools.NewGlobTool(cfg.ContextDir),
 		plantools.NewGrepTool(cfg.ContextDir),
 		plantools.NewReadTool(cfg.ContextDir),
 		plantools.NewListTool(cfg.ContextDir),
 		newReadToolOutputTool(outputStore),
-	}
+	)
 	for _, extra := range cfg.ExtraTools {
 		tools = append(tools, extra)
 	}

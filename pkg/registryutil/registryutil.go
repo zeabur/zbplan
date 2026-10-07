@@ -2,22 +2,80 @@ package registryutil
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/hashicorp/golang-lru/v2/expirable"
-	"golang.org/x/sync/singleflight"
+	"resenje.org/singleflight"
 )
 
 const (
 	RegistryDockerHub = "docker.io"
 	RegistryGHCR      = "ghcr.io"
+	RegistryQuay      = "quay.io"
+	RegistryGCR       = "gcr.io"
 
 	defaultTagCacheTTL = 10 * time.Minute
 	defaultTagCacheMax = 1024
+	defaultHTTPTimeout = 30 * time.Second
 )
+
+// registryHostRE accepts a lowercase DNS host with an optional port. Allowlist
+// entries become BuildKit source-policy selectors, so wildcard and path
+// characters must never pass.
+var registryHostRE = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?::[0-9]{1,5})?$`)
+
+// NormalizeAllowedRegistries returns a lowercase, trimmed, de-duplicated
+// registry allowlist. An empty list uses the supported public defaults.
+func NormalizeAllowedRegistries(configured []string) ([]string, error) {
+	if len(configured) == 0 {
+		return []string{RegistryDockerHub, RegistryGHCR, RegistryQuay, RegistryGCR}, nil
+	}
+
+	seen := make(map[string]struct{}, len(configured))
+	registries := make([]string, 0, len(configured))
+	for _, registry := range configured {
+		registry = strings.ToLower(strings.TrimSpace(registry))
+		if registry == "" {
+			continue
+		}
+		if !registryHostRE.MatchString(registry) {
+			return nil, fmt.Errorf("invalid registry %q", registry)
+		}
+		parsed, err := name.NewRegistry(registry, name.StrictValidation)
+		// go-containerregistry maps docker.io to index.docker.io internally.
+		// Keep the public hostname used by image policy and tool allowlists.
+		if err != nil || (parsed.Name() != registry && registry != RegistryDockerHub) {
+			return nil, fmt.Errorf("invalid registry %q", registry)
+		}
+		if _, ok := seen[registry]; ok {
+			continue
+		}
+		seen[registry] = struct{}{}
+		registries = append(registries, registry)
+	}
+	if len(registries) == 0 {
+		return nil, fmt.Errorf("registry allowlist is empty")
+	}
+	return registries, nil
+}
+
+// SearchableRegistries returns the registries in allowed whose image search
+// API Images supports, in a stable order. allowed must already be normalized.
+func SearchableRegistries(allowed []string) []string {
+	var searchable []string
+	for _, registry := range []string{RegistryDockerHub, RegistryGHCR} {
+		if slices.Contains(allowed, registry) {
+			searchable = append(searchable, registry)
+		}
+	}
+	return searchable
+}
 
 type Tag struct {
 	Name      string
@@ -41,8 +99,10 @@ type finder struct {
 
 	tagNamesCache     *expirable.LRU[string, []string]
 	tagCreatedAtCache *expirable.LRU[string, time.Time]
-	tagNamesGroup     singleflight.Group
-	tagCreatedAtGroup singleflight.Group
+	// resenje.org/singleflight cancels shared work only after every waiting
+	// caller has left, so one caller's deadline never fails another caller.
+	tagNamesGroup     singleflight.Group[string, []string]
+	tagCreatedAtGroup singleflight.Group[string, time.Time]
 
 	listRemoteTags      func(context.Context, name.Repository) ([]string, error)
 	resolveTagCreatedAt func(context.Context, name.Repository, string, string, string) (time.Time, error)
@@ -121,5 +181,5 @@ func (f *finder) httpClient() *http.Client {
 	if f.HTTPClient != nil {
 		return f.HTTPClient
 	}
-	return http.DefaultClient
+	return &http.Client{Timeout: defaultHTTPTimeout}
 }
