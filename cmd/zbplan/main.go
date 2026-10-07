@@ -13,18 +13,16 @@ import (
 )
 
 var (
-	buildkitAddr   = flag.String("buildkit-addr", "", "optional: the address of the buildkit server")
-	contextDir     = flag.String("context-dir", "", "the directory to use as the build context")
-	dockerfilePath = flag.String("dockerfile", "", "optional: path to an existing Dockerfile to try first")
-	ociOut         = flag.String("oci-out", "", "optional: write OCI image tarball to this path")
-	variables      = MapFlag{}
-
+	buildkitAddr      = flag.String("buildkit-addr", "", "optional: the address of the buildkit server")
+	contextDir        = flag.String("context-dir", "", "the directory to use as the build context")
+	dockerfilePath    = flag.String("dockerfile", "", "optional: path to an existing Dockerfile to try first")
+	ociOut            = flag.String("oci-out", "", "optional: write OCI image tarball to this path")
 	allowedRegistries = flag.String("allowed-registries", "", "comma-separated allowed image registries (default: docker.io,ghcr.io,quay.io,gcr.io)")
+	maxBuildAttempts  = flag.Int("max-build-attempts", 0, "maximum generated Dockerfile build attempts (default 3)")
+	maxAgentSteps     = flag.Int("max-agent-steps", 0, "maximum ReAct steps per generation (default 16)")
+	runTimeout        = flag.Duration("run-timeout", 0, "maximum total run duration (default 15m)")
+	buildTimeout      = flag.Duration("build-timeout", 0, "maximum duration of one BuildKit solve (default 10m)")
 )
-
-func init() {
-	flag.Var(&variables, "variables", "the variables to pass to the build context")
-}
 
 func main() {
 	flag.Parse()
@@ -54,7 +52,6 @@ func main() {
 		}
 		userDockerfile = string(data)
 	}
-
 	var registries []string
 	if value := strings.TrimSpace(*allowedRegistries); value != "" {
 		registries = strings.Split(value, ",")
@@ -64,9 +61,12 @@ func main() {
 		Model:             chatModel,
 		BuildKitAddr:      *buildkitAddr,
 		ContextDir:        *contextDir,
-		Variables:         variables,
 		AllowedRegistries: registries,
 		UserDockerfile:    userDockerfile,
+		MaxBuildAttempts:  *maxBuildAttempts,
+		MaxAgentSteps:     *maxAgentSteps,
+		RunTimeout:        *runTimeout,
+		BuildTimeout:      *buildTimeout,
 	}
 
 	if *ociOut != "" {

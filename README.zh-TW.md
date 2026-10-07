@@ -85,7 +85,7 @@ Zeabur 打算基於這個方向做出改進：
 
 ```mermaid
 flowchart TD
-    A[啟動 zbplan CLI] --> B[讀取 flags: buildkit-addr, context-dir, variables]
+    A[啟動 zbplan CLI] --> B[讀取專案路徑、registry allowlist 與執行上限]
     B --> C[連線 BuildKit]
     C --> D[建立指定模型的 ReAct agent]
     D --> E[註冊 tools]
@@ -100,8 +100,8 @@ flowchart TD
 
     F --> G[Agent 輸出 raw Dockerfile]
     G --> H[抽取 Dockerfile 內容]
-    H --> I[注入 ZEABUR_ENV_* build args / env vars]
-    I --> J[BuildKit build]
+    H --> I[附上 BuildKit source policy 與過濾後的 build context]
+    I --> J[執行一次有資源上限的 BuildKit build]
 
     J -->|成功| K[輸出 Dockerfile]
     J -->|失敗| L[收集 BuildKit logs]
@@ -113,13 +113,13 @@ flowchart TD
 
 ## 主要元件
 
-- `cmd/zbplan`: CLI entrypoint，建立 Claude ReAct agent，執行最多 3 次的「生成 Dockerfile → BuildKit 編譯 → 失敗修正」迴圈。
+- `cmd/zbplan`：CLI entrypoint，建立指定模型的 ReAct agent，並在設定的嘗試次數、步數與時間上限內執行 generate → build → fix 迴圈。
 - `pkg/zbplan`：Agent orchestration 與 context budgeting。單次送入模型的 tool result 和 BuildKit retry logs 以 12 KiB 為上限；完整 tool result 只會保留在有總容量限制的 store 裡，且只有原先已被截斷的結果會在較早的 tool rounds 中壓縮成 reference。
   `read_tool_output` 分頁會保留在模型的對話紀錄中，不會再存入 output store，因此讀取分頁不會擠掉原始結果。
-- `internal/plantools`: 提供 agent 可呼叫的工具，包括專案檔案檢索、Dockerfile template fuzzy search、registry image/tag search，以及 BuildKit client wrapper。
-- `internal/plantools/dockerfiles`: 內建 Dockerfile templates，目前涵蓋 Bun、Deno、FastAPI、Go、Java Gradle、Java Maven、Next.js、Node npm、Node pnpm、PHP、Python pip、Python uv、Ruby、Rust、Static。
-- `pkg/registryutil`: 搜尋 Docker Hub / GHCR images，並用 fuzzy search 挑出符合版本需求的 tags。
-- `pkg/builder`: BuildKit builder，負責 Dockerfile 前處理、環境變數注入、build context 掛載與 build progress logging。
+- `internal/plantools`：提供 agent 有明確工作量上限的專案檔案檢索、Dockerfile template fuzzy search、registry allowlist image/tag search，以及 BuildKit client wrapper。
+- `internal/plantools/dockerfiles`：內建 Dockerfile templates，目前涵蓋 Bun、Deno、FastAPI、Go、Java Gradle、Java Maven、Next.js、Node npm、Node pnpm、Nuxt server、Nuxt static、PHP、Python pip、Python uv、Ruby、Rust、Static。
+- `pkg/registryutil`：搜尋 Docker Hub / GHCR images，並用 fuzzy search 挑出符合版本需求的 tags。
+- `pkg/builder`：BuildKit builder，負責附上 source policy、固定使用內建 Dockerfile frontend、過濾 build context、以 `RUN` secret 掛載 build variables，並回報 build progress。
 
 ## 使用方式
 
@@ -132,9 +132,16 @@ nix develop --command go run ./cmd/zbplan \
   --context-dir /path/to/project
 ```
 
-可以用 `--variables KEY=value` 傳入環境變數。這些變數會在 Dockerfile 每個 stage 的 `FROM` 後被注入成 `ARG ZEABUR_ENV_*` 與對應的 `ENV`。
+Build policy 由 BuildKit daemon 強制執行，不靠比對 Dockerfile 文字：
 
-可用逗號分隔的 `--allowed-registries` 取代預設的 image registry allowlist（`docker.io`、`ghcr.io`、`quay.io`、`gcr.io`）。Image 搜尋與 tag 查詢只會連到 allowlist 內的 registry。
+- 每次 solve 都帶上 BuildKit [source policy](https://pkg.go.dev/github.com/moby/buildkit/sourcepolicy)：除了本機 build context 與 allowlist 內 registry 的 image，其餘來源一律拒絕。`FROM`、`COPY --from`、`RUN --mount from=`、base image 繼承的 `ONBUILD`、遠端 `ADD` URL 與 Git 來源都適用。Allowlist 預設為 `docker.io`、`ghcr.io`、`quay.io` 與 `gcr.io`，可用逗號分隔的 `--allowed-registries` 取代。Image 搜尋與 tag 查詢也使用同一份 allowlist。
+- 固定使用 daemon 內建的 Dockerfile frontend，`# syntax` 指令無法載入外部 frontend image。
+- 不授予任何 entitlement，BuildKit 會拒絕 `RUN --network=host` 與 `--security=insecure`。其他 `RUN` 指令使用 BuildKit 的預設 network。
+- Build context 只包含 agent 檔案工具能讀取的檔案：被 `.gitignore` 忽略的路徑、預設的相依套件／快取目錄，以及 `.env*`、`.npmrc`、私鑰等憑證檔案都不會傳給 BuildKit。
+
+zbplan 不會把 runtime secrets 或環境變數傳入 AI 產生的 build。
+
+每次執行的上限為 `--max-build-attempts`（預設 3）、每次 generation 的 `--max-agent-steps`（預設 16，同時限制 model 請求與 tool 回合數）、`--run-timeout`（預設 15m），以及每次 BuildKit solve 的 `--build-timeout`（預設 10m）。
 
 ## 開發
 
