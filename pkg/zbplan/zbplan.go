@@ -85,6 +85,15 @@ type Result struct {
 // Run generates a working Dockerfile for cfg.ContextDir and returns it.
 // If cfg.OCIOutput is non-nil, the built OCI tarball is also streamed there.
 func Run(ctx context.Context, cfg Config) (result *Result, err error) {
+	// Run owns OCIOutput from the start, so every return path closes it.
+	if cfg.OCIOutput != nil {
+		defer func() {
+			if closeErr := cfg.OCIOutput.Close(); closeErr != nil && err == nil {
+				result = nil
+				err = fmt.Errorf("zbplan: close OCI output: %w", closeErr)
+			}
+		}()
+	}
 	if cfg.Model == nil {
 		return nil, fmt.Errorf("zbplan: Model is required")
 	}
@@ -134,14 +143,6 @@ func Run(ctx context.Context, cfg Config) (result *Result, err error) {
 	defer func() { _ = builderClient.Close() }()
 
 	outputStore := newToolOutputStore(maxRetainedToolOutputBytes)
-	if cfg.OCIOutput != nil {
-		defer func() {
-			if closeErr := cfg.OCIOutput.Close(); closeErr != nil && err == nil {
-				result = nil
-				err = fmt.Errorf("zbplan: close OCI output: %w", closeErr)
-			}
-		}()
-	}
 
 	build := func(dockerfile string) (string, error) {
 		return runBuildOnce(ctx, builderClient, dockerfile, cfg.OCIOutput)
