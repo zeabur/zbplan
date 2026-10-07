@@ -1,0 +1,81 @@
+package builder
+
+import (
+	"context"
+	"errors"
+	"io/fs"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"slices"
+	"testing"
+
+	"github.com/tonistiigi/fsutil"
+)
+
+func TestFilteredFSHidesExcludedPathsFromWalkAndOpen(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	for _, name := range []string{"app.go", ".env", "secrets/token", "src/main.go"} {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base, err := fsutil.NewFS(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filtered := newFilteredFS(base, func(path string, _ bool) bool {
+		return path == ".env" || path == "secrets"
+	})
+
+	var walked []string
+	err = filtered.Walk(context.Background(), "", func(path string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		walked = append(walked, filepath.ToSlash(path))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(walked)
+	if want := []string{"app.go", "src", "src/main.go"}; !slices.Equal(walked, want) {
+		t.Fatalf("walked %v, want %v", walked, want)
+	}
+
+	for _, name := range []string{".env", "secrets/token", "./secrets/../.env"} {
+		if _, err := filtered.Open(name); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("Open(%q) = %v, want not-exist", name, err)
+		}
+	}
+	rc, err := filtered.Open("src/main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = rc.Close()
+}
+
+type closeCounter struct{ closes int }
+
+func (c *closeCounter) Write(p []byte) (int, error) { return len(p), nil }
+func (c *closeCounter) Close() error                { c.closes++; return nil }
+
+func TestBuildOCIClosesWriterWhenValidationFails(t *testing.T) {
+	t.Parallel()
+
+	w := &closeCounter{}
+	b := NewBuildkitBuilder(nil, slog.New(slog.DiscardHandler))
+	if err := b.BuildOCI(context.Background(), BuildImageOptions{Dockerfile: "# no instructions\n"}, w); err == nil {
+		t.Fatal("expected validation failure")
+	}
+	if w.closes != 1 {
+		t.Fatalf("writer closed %d times, want 1", w.closes)
+	}
+}

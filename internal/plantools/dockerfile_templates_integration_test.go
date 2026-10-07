@@ -38,13 +38,17 @@ func TestTemplatesBuild(t *testing.T) {
 				t.Fatalf("fixture missing — create testdata/fixtures/%s/: %v", tpl.Name, err)
 			}
 
-			bc, err := plantools.NewBuilderClient(ctx, addr, fixtureDir, nil)
+			bc, err := plantools.NewBuilderClient(ctx, plantools.BuilderClientConfig{
+				Addr:       addr,
+				ContextDir: fixtureDir,
+				Timeout:    10 * time.Minute,
+			})
 			if err != nil {
 				t.Fatalf("connect to buildkit: %v", err)
 			}
 			t.Cleanup(func() { _ = bc.Close() })
 
-			logs, err := bc.RunBuild(ctx, tpl.Content)
+			logs, err := bc.RunBuild(ctx, tpl.Content, nil)
 			if err != nil {
 				t.Fatalf("build failed:\n%s\nerr: %v", logs, err)
 			}

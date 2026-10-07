@@ -85,7 +85,7 @@ Zeabur plans to improve on this direction:
 
 ```mermaid
 flowchart TD
-    A[Start zbplan CLI] --> B[Parse flags: buildkit-addr, context-dir, variables]
+    A[Start zbplan CLI] --> B[Parse context, registry allowlist, and limits]
     B --> C[Connect to BuildKit]
     C --> D[Create the configured ReAct agent]
     D --> E[Register tools]
@@ -100,8 +100,8 @@ flowchart TD
 
     F --> G[Agent outputs raw Dockerfile]
     G --> H[Extract Dockerfile content]
-    H --> I[Mount build variables as RUN secrets]
-    I --> J[BuildKit build]
+    H --> I[Attach BuildKit source policy and filtered context]
+    I --> J[One bounded BuildKit solve]
 
     J -->|success| K[Output Dockerfile]
     J -->|failure| L[Collect BuildKit logs]
@@ -113,13 +113,13 @@ flowchart TD
 
 ## Key Components
 
-- `cmd/zbplan`: CLI entrypoint. Creates a Claude ReAct agent and runs up to 3 iterations of the generate → build → fix loop.
+- `cmd/zbplan`: CLI entrypoint. Creates the configured ReAct agent and runs the generate → build → fix loop within the configured attempt, step, and time limits.
 - `pkg/zbplan`: Agent orchestration and context budgeting. Individual model-visible tool results and BuildKit retry logs are capped at 12 KiB; full tool results are retained only within a byte-capped store, and only previously truncated results are compacted in older tool rounds.
   `read_tool_output` pages stay verbatim in model history and are not retained again, so paging does not evict the source from the output store.
-- `internal/plantools`: Tools exposed to the agent — project file inspection, Dockerfile template fuzzy search, registry image/tag search, and a BuildKit client wrapper.
+- `internal/plantools`: Bounded tools exposed to the agent — project file inspection, Dockerfile template fuzzy search, allowlisted registry image/tag search, and a BuildKit client wrapper.
 - `internal/plantools/dockerfiles`: Built-in Dockerfile templates, currently covering Bun, Deno, FastAPI, Go, Java Gradle, Java Maven, Next.js, Node npm, Node pnpm, Nuxt server, Nuxt static, PHP, Python pip, Python uv, Ruby, Rust, and Static.
 - `pkg/registryutil`: Searches Docker Hub / GHCR images and uses fuzzy search to pick tags matching the required version.
-- `pkg/builder`: BuildKit builder — handles Dockerfile preprocessing, environment variable injection, build context mounting, and build progress logging.
+- `pkg/builder`: BuildKit builder — attaches the source policy, pins the bundled Dockerfile frontend, filters the build context, mounts build variables as `RUN` secrets, and reports build progress.
 
 ## Usage
 
@@ -132,31 +132,24 @@ nix develop --command go run ./cmd/zbplan \
   --context-dir /path/to/project
 ```
 
-Use `--variables KEY=value` to pass build-time variables. `RUN` receives them
-through BuildKit secret environment mounts, without adding runtime image `ENV`
-defaults. Dockerfile `ENV` assignments still override a build input for subsequent
-instructions in that stage. Supply runtime variables separately when starting the
-container.
+Build policy is enforced by the BuildKit daemon, not by inspecting Dockerfile text:
 
-Explicit references in Dockerfile configuration (such as `WORKDIR $APP_DIR` or
-`ENV MODE=$BUILD_MODE`) remain public build arguments and may appear in metadata.
-Keep credentials in `RUN`; neither secret mounts nor the builder can prevent a
-build command from deliberately printing or copying credentials into artifacts.
-Secret environment mounts require Dockerfile frontend 1.10+. Older stable
-`docker/dockerfile:1.x` directives use the worker's bundled frontend without
-changing the original source. Custom and labs frontends must support secret-env
-mounts themselves.
+- Every solve carries a BuildKit [source policy](https://pkg.go.dev/github.com/moby/buildkit/sourcepolicy) that denies all sources except the local build context and images from the registry allowlist. It covers `FROM`, `COPY --from`, `RUN --mount from=`, inherited `ONBUILD` triggers, remote `ADD` URLs and Git sources alike. The allowlist defaults to `docker.io`, `ghcr.io`, `quay.io`, and `gcr.io`; replace it with a comma-separated `--allowed-registries` value. Image search and tag lookup use the same allowlist.
+- The daemon's bundled Dockerfile frontend is pinned, so `# syntax` directives cannot load an external frontend image.
+- No entitlements are granted, so BuildKit rejects `RUN --network=host` and `--security=insecure`. Other `RUN` instructions use BuildKit's default network.
+- The build context contains only files the agent's file tools may read: `.gitignore`d paths, default dependency/cache directories, and credential files such as `.env*`, `.npmrc`, and private keys are never sent to BuildKit.
 
-The shared `pkg/buildenv` implementation uses a process-keyed digest in secret IDs
-so changed inputs invalidate cache without exposing their values or unkeyed
-hashes. Repeated builds in one process retain cache reuse; new processes use a
-new namespace.
+The CLI and `pkg/zbplan` intentionally do not pass runtime secrets or environment variables into generated builds.
 
-Run the local security/runtime/cache integration checks with
-`scripts/test-build-env.sh`. They use dummy credentials and a local HTTP server,
-start an isolated pinned BuildKit container, and remove that container afterward.
+Each run is bounded by `--max-build-attempts` (default 3), `--max-agent-steps` per generation (default 16, which also bounds model requests and tool rounds), `--run-timeout` (default 15m), and `--build-timeout` per BuildKit solve (default 10m).
 
-Use `--allowed-registries` to replace the default image registry allowlist (`docker.io`, `ghcr.io`, `quay.io`, `gcr.io`). Image search and tag lookup only contact allowed registries.
+Direct `pkg/builder` callers may supply trusted build-time values through `BuildImageOptions.Variables`. `RUN` receives them through BuildKit secret environment mounts, without adding runtime image `ENV` defaults. Dockerfile `ENV` assignments still override a build input for subsequent instructions in that stage. Supply runtime variables separately when starting the container.
+
+Explicit references in Dockerfile configuration (such as `WORKDIR $APP_DIR` or `ENV MODE=$BUILD_MODE`) remain public build arguments and may appear in metadata. Keep credentials in `RUN`; neither secret mounts nor the builder can prevent a build command from deliberately printing or copying credentials into artifacts.
+
+The shared `pkg/buildenv` implementation uses a process-keyed digest in secret IDs so changed inputs invalidate cache without exposing their values or unkeyed hashes. Repeated builds in one process retain cache reuse; new processes use a new namespace.
+
+Run the local security/runtime/cache integration checks with `scripts/test-build-env.sh`. They use dummy credentials and a local HTTP server, start an isolated pinned BuildKit container, and remove that container afterward.
 
 ## Development
 
