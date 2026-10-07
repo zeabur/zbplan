@@ -312,6 +312,12 @@ func (t *readToolOutputTool) InvokableRun(_ context.Context, argsJSON string, _ 
 	for end > start && end < len(output) && !utf8.RuneStart(output[end]) {
 		end--
 	}
+	if end == start {
+		// A limit smaller than the next rune would return an empty page
+		// forever; always make progress by one rune.
+		_, size := utf8.DecodeRuneInString(output[start:])
+		end = start + size
+	}
 
 	return fmt.Sprintf("[%s bytes %d:%d of %d]\n%s", args.Ref, start, end, len(output), output[start:end]), nil
 }

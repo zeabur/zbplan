@@ -146,6 +146,21 @@ func TestReadToolOutputReturnsBoundedUTF8Range(t *testing.T) {
 	}
 }
 
+func TestReadToolOutputLimitBelowRuneStillAdvances(t *testing.T) {
+	store := newToolOutputStore()
+	ref := store.save("call-1", "界a")
+	result, err := newReadToolOutputTool(store).InvokableRun(
+		context.Background(),
+		`{"ref":"`+ref+`","offset":0,"limit":1}`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(result, "["+ref+" bytes 0:3 of 4]\n界") {
+		t.Fatalf("page did not advance past the first rune: %q", result)
+	}
+}
+
 func TestReadToolOutputPagesDoNotEvictSource(t *testing.T) {
 	const sourceCallID = "source-call"
 	payload := strings.Repeat("0123456789", 2000)

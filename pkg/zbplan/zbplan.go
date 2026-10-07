@@ -158,6 +158,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, fmt.Errorf("zbplan: create agent: %w", err)
 	}
 
+	var lastDockerfile string
 	for attempt := 1; attempt <= cfg.MaxBuildAttempts; attempt++ {
 		cfg.Logger.InfoContext(ctx, "generating dockerfile", "attempt", attempt)
 
@@ -179,6 +180,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		}
 
 		dockerfile := extractDockerfile(msg.Content)
+		lastDockerfile = dockerfile
 
 		cfg.Logger.InfoContext(ctx, "trying to build dockerfile", "attempt", attempt)
 		buildLogs, buildErr := builderClient.RunBuild(ctx, dockerfile)
@@ -195,7 +197,8 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		prompt = withToolCatalog(buildRetryPrompt(dockerfile, buildLogs), outputStore)
 	}
 
-	return nil, fmt.Errorf("zbplan: dockerfile failed to build after %d attempts", cfg.MaxBuildAttempts)
+	return nil, fmt.Errorf("zbplan: dockerfile failed to build after %d attempts; last dockerfile:\n%s",
+		cfg.MaxBuildAttempts, lastDockerfile)
 }
 
 func withToolCatalog(prompt string, store *toolOutputStore) string {
