@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path"
+	"sync"
 
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/util/progress/progressui"
@@ -162,11 +163,15 @@ func (b *builder) BuildOCI(ctx context.Context, options BuildImageOptions, w io.
 	if w == nil {
 		return fmt.Errorf("nil output writer")
 	}
+	// BuildKit closes w only once the exporter runs; close it here too when
+	// the build stops earlier, so w is always closed exactly once.
+	out := &closeOnce{WriteCloser: w}
+	defer func() { _ = out.Close() }()
 	exports := []client.ExportEntry{
 		{
 			Type: client.ExporterOCI,
 			Output: func(_ map[string]string) (io.WriteCloser, error) {
-				return w, nil
+				return out, nil
 			},
 		},
 	}
@@ -177,4 +182,15 @@ func (b *builder) BuildOCI(ctx context.Context, options BuildImageOptions, w io.
 
 	b.logger.InfoContext(ctx, "📦 Build completed.")
 	return nil
+}
+
+type closeOnce struct {
+	io.WriteCloser
+	once sync.Once
+	err  error
+}
+
+func (c *closeOnce) Close() error {
+	c.once.Do(func() { c.err = c.WriteCloser.Close() })
+	return c.err
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -70,5 +71,23 @@ func TestFilteredFSWithoutPredicateIsUnchanged(t *testing.T) {
 	}
 	if got := newFilteredFS(base, nil); got != base {
 		t.Fatal("nil predicate should not wrap the filesystem")
+	}
+}
+
+type closeCounter struct{ closes int }
+
+func (c *closeCounter) Write(p []byte) (int, error) { return len(p), nil }
+func (c *closeCounter) Close() error                { c.closes++; return nil }
+
+func TestBuildOCIClosesWriterWhenValidationFails(t *testing.T) {
+	t.Parallel()
+
+	w := &closeCounter{}
+	b := NewBuildkitBuilder(nil, slog.New(slog.DiscardHandler))
+	if err := b.BuildOCI(context.Background(), BuildImageOptions{Dockerfile: "# no instructions\n"}, w); err == nil {
+		t.Fatal("expected validation failure")
+	}
+	if w.closes != 1 {
+		t.Fatalf("writer closed %d times, want 1", w.closes)
 	}
 }
