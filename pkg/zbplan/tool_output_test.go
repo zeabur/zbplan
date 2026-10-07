@@ -322,3 +322,14 @@ func TestBoundedBuildLogsKeepsFailureTail(t *testing.T) {
 		t.Fatalf("bounded logs do not explain truncation: %q", bounded)
 	}
 }
+
+func TestToolOutputCatalogKeepsNewestEntriesWithinBudget(t *testing.T) {
+	store := newToolOutputStore()
+	oldRef := store.saveCall("call-old", "read", `{"path":"old"}`, strings.Repeat("o", defaultMaxToolOutputBytes+1))
+	newRef := store.saveCall("call-new", "read", `{"path":"new"}`, strings.Repeat("n", defaultMaxToolOutputBytes+1))
+
+	catalog := store.catalog(len("- " + newRef + ": read {\"path\":\"new\"}\n"))
+	if !strings.Contains(catalog, newRef) || strings.Contains(catalog, oldRef) {
+		t.Fatalf("catalog should keep only the newest entry, got %q", catalog)
+	}
+}

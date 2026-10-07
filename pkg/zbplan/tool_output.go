@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -136,8 +137,10 @@ func (s *toolOutputStore) catalog(maxBytes int) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// Newest first: when the budget runs out, the outputs closest to the
+	// failure being fixed are the ones kept.
 	var result strings.Builder
-	for _, ref := range s.order {
+	for _, ref := range slices.Backward(s.order) {
 		stored, ok := s.outputs[ref]
 		if !ok || stored.toolName == "" {
 			continue
