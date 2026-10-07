@@ -3,6 +3,7 @@ package plantools_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/zeabur/zbplan/internal/plantools"
@@ -31,6 +32,33 @@ func (m *mockFinder) Tags(ctx context.Context, registry, image, keyword string, 
 
 // ListImages tests
 
+var defaultSearchRegistries = []string{registryutil.RegistryDockerHub, registryutil.RegistryGHCR}
+
+func TestListImages_SearchesOnlyGivenRegistries(t *testing.T) {
+	t.Parallel()
+
+	allowed, err := registryutil.NormalizeAllowedRegistries([]string{"ghcr.io", "registry.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	searchable := registryutil.SearchableRegistries(allowed)
+	f := &mockFinder{
+		imagesFn: func(_ context.Context, registry, _ string, _ int) ([]registryutil.Image, error) {
+			if registry != "ghcr.io" {
+				t.Errorf("searched registry %q outside the allowlist", registry)
+			}
+			return []registryutil.Image{{Registry: registry, Name: "image"}}, nil
+		},
+	}
+	results, err := plantools.ListImages(context.Background(), f, searchable, "image")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Registry != "ghcr.io" {
+		t.Fatalf("unexpected results: %#v", results)
+	}
+}
+
 func TestListImages_ReturnsCombinedResults(t *testing.T) {
 	t.Parallel()
 
@@ -42,7 +70,7 @@ func TestListImages_ReturnsCombinedResults(t *testing.T) {
 		},
 	}
 
-	results, err := plantools.ListImages(context.Background(), f, "myimage")
+	results, err := plantools.ListImages(context.Background(), f, defaultSearchRegistries, "myimage")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -65,7 +93,7 @@ func TestListImages_RegistryError_PartialResults(t *testing.T) {
 		},
 	}
 
-	results, err := plantools.ListImages(context.Background(), f, "image")
+	results, err := plantools.ListImages(context.Background(), f, defaultSearchRegistries, "image")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,7 +114,7 @@ func TestListImages_BothRegistriesError_ReturnsEmpty(t *testing.T) {
 		},
 	}
 
-	results, err := plantools.ListImages(context.Background(), f, "image")
+	results, err := plantools.ListImages(context.Background(), f, defaultSearchRegistries, "image")
 	if err != nil {
 		t.Fatalf("ListImages should not propagate registry errors, got: %v", err)
 	}
@@ -104,7 +132,7 @@ func TestListImages_NoImages_ReturnsEmpty(t *testing.T) {
 		},
 	}
 
-	results, err := plantools.ListImages(context.Background(), f, "nonexistent")
+	results, err := plantools.ListImages(context.Background(), f, defaultSearchRegistries, "nonexistent")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -125,7 +153,7 @@ func TestListImages_CancelledContext_ReturnsEmpty(t *testing.T) {
 		},
 	}
 
-	results, err := plantools.ListImages(ctx, f, "image")
+	results, err := plantools.ListImages(ctx, f, defaultSearchRegistries, "image")
 	if err != nil {
 		t.Fatalf("unexpected error with cancelled context: %v", err)
 	}
@@ -145,7 +173,7 @@ func TestListTags_ReturnsTags(t *testing.T) {
 		},
 	}
 
-	tags, err := plantools.ListTags(context.Background(), f, "docker.io", "golang", "1.22")
+	tags, err := plantools.ListTags(context.Background(), f, nil, "docker.io", "golang", "1.22")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -165,7 +193,7 @@ func TestListTags_EmptyQuery_DefaultsToLatest(t *testing.T) {
 		},
 	}
 
-	_, err := plantools.ListTags(context.Background(), f, "docker.io", "golang", "")
+	_, err := plantools.ListTags(context.Background(), f, nil, "docker.io", "golang", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -183,8 +211,113 @@ func TestListTags_FinderError_ReturnsError(t *testing.T) {
 		},
 	}
 
-	_, err := plantools.ListTags(context.Background(), f, "docker.io", "golang", "latest")
+	_, err := plantools.ListTags(context.Background(), f, nil, "docker.io", "golang", "latest")
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestListTags_RejectsUntrustedRegistry(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	f := &mockFinder{
+		tagsFn: func(_ context.Context, _, _, _ string, _ int) ([]registryutil.Tag, error) {
+			called = true
+			return nil, nil
+		},
+	}
+
+	_, err := plantools.ListTags(context.Background(), f, nil, "127.0.0.1:5000", "probe", "latest")
+	if err == nil {
+		t.Fatal("expected untrusted registry to be rejected")
+	}
+	if called {
+		t.Fatal("finder was called for an untrusted registry")
+	}
+}
+
+func TestListTags_AllowsConfiguredRegistry(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	f := &mockFinder{
+		tagsFn: func(_ context.Context, registry, _, _ string, _ int) ([]registryutil.Tag, error) {
+			called = true
+			if registry != "registry.example.com" {
+				t.Fatalf("registry = %q", registry)
+			}
+			return []registryutil.Tag{{Name: "latest"}}, nil
+		},
+	}
+
+	if _, err := plantools.ListTags(
+		context.Background(),
+		f,
+		[]string{"registry.example.com"},
+		"registry.example.com",
+		"team/image",
+		"latest",
+	); err != nil {
+		t.Fatalf("configured registry was rejected: %v", err)
+	}
+	if !called {
+		t.Fatal("finder was not called for configured registry")
+	}
+}
+
+func TestListTags_RejectsInvalidImagePath(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	f := &mockFinder{
+		tagsFn: func(_ context.Context, _, _, _ string, _ int) ([]registryutil.Tag, error) {
+			called = true
+			return nil, nil
+		},
+	}
+
+	if _, err := plantools.ListTags(context.Background(), f, nil, "docker.io", "../admin", "latest"); err == nil {
+		t.Fatal("expected invalid image path to be rejected")
+	}
+	if called {
+		t.Fatal("finder was called for an invalid image path")
+	}
+}
+
+func TestListTags_AcceptsReferenceGrammarSeparators(t *testing.T) {
+	t.Parallel()
+
+	f := &mockFinder{
+		tagsFn: func(_ context.Context, _, _, _ string, _ int) ([]registryutil.Tag, error) {
+			return []registryutil.Tag{{Name: "1"}}, nil
+		},
+	}
+	for _, image := range []string{"team/foo__bar", "team/foo--bar", "foo.bar/baz", "ubuntu", "library/ubuntu"} {
+		if _, err := plantools.ListTags(context.Background(), f, nil, "docker.io", image, "1"); err != nil {
+			t.Errorf("%s: %v", image, err)
+		}
+	}
+	for _, image := range []string{"Team/Foo", "team/foo___bar", "team//foo", "team/foo:tag", "/team"} {
+		if _, err := plantools.ListTags(context.Background(), f, nil, "docker.io", image, "1"); err == nil {
+			t.Errorf("%s: expected rejection", image)
+		}
+	}
+}
+
+func TestListTagsToolDescribesAllowedRegistries(t *testing.T) {
+	t.Parallel()
+
+	info, err := plantools.NewListTagsTool([]string{"registry.example.com"}).Info(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := info.ToJSONSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, ok := schema.Properties.Get("registry")
+	if !ok || !strings.Contains(registry.Description, "registry.example.com") || strings.Contains(registry.Description, "docker.io") {
+		t.Fatalf("registry description does not reflect the allowlist: %+v", registry)
 	}
 }

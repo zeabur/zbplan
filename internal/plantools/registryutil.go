@@ -5,25 +5,35 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
+	"github.com/distribution/reference"
 	"github.com/zeabur/zbplan/pkg/registryutil"
 )
 
 type listImagesTool struct {
-	finder registryutil.Finder
+	finder     registryutil.Finder
+	registries []string
 }
 
-func NewListImagesTool() tool.InvokableTool {
-	return &listImagesTool{finder: registryutil.NewFinder()}
+// NewListImagesTool searches only the given registries. Pass
+// registryutil.SearchableRegistries of the run's allowlist so the agent never
+// contacts, or is offered images from, a registry the build would deny.
+func NewListImagesTool(registries []string) tool.InvokableTool {
+	return &listImagesTool{
+		finder:     registryutil.NewFinder(),
+		registries: slices.Clone(registries),
+	}
 }
 
 func (t *listImagesTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
 		Name: "list_images",
-		Desc: "Searches for Docker images matching the query on docker.io and ghcr.io. Use this to find candidate base images.",
+		Desc: "Searches for Docker images matching the query on " + strings.Join(t.registries, " and ") + ". Use this to find candidate base images.",
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"query": {
 				Type:     schema.String,
@@ -44,7 +54,10 @@ func (t *listImagesTool) InvokableRun(ctx context.Context, argsJSON string, _ ..
 	if args.Query == "" {
 		return "", fmt.Errorf("query is required")
 	}
-	result, err := ListImages(ctx, t.finder, args.Query)
+	if len(args.Query) > 128 {
+		return "", fmt.Errorf("query is too long")
+	}
+	result, err := ListImages(ctx, t.finder, t.registries, args.Query)
 	if err != nil {
 		return "", fmt.Errorf("list images: %w", err)
 	}
@@ -56,11 +69,18 @@ func (t *listImagesTool) InvokableRun(ctx context.Context, argsJSON string, _ ..
 }
 
 type listTagsTool struct {
-	finder registryutil.Finder
+	finder            registryutil.Finder
+	allowedRegistries []string
 }
 
-func NewListTagsTool() tool.InvokableTool {
-	return &listTagsTool{finder: registryutil.NewFinder()}
+func NewListTagsTool(allowedRegistries []string) tool.InvokableTool {
+	if normalized, err := registryutil.NormalizeAllowedRegistries(allowedRegistries); err == nil {
+		allowedRegistries = normalized
+	}
+	return &listTagsTool{
+		finder:            registryutil.NewFinder(),
+		allowedRegistries: slices.Clone(allowedRegistries),
+	}
 }
 
 func (t *listTagsTool) Info(_ context.Context) (*schema.ToolInfo, error) {
@@ -70,7 +90,7 @@ func (t *listTagsTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"registry": {
 				Type:     schema.String,
-				Desc:     "The registry hosting the image, e.g. 'docker.io', 'ghcr.io'",
+				Desc:     "The registry hosting the image; one of: " + strings.Join(t.allowedRegistries, ", "),
 				Required: true,
 			},
 			"image": {
@@ -101,7 +121,7 @@ func (t *listTagsTool) InvokableRun(ctx context.Context, argsJSON string, _ ...t
 	if args.Image == "" {
 		return "", fmt.Errorf("image is required")
 	}
-	result, err := ListTags(ctx, t.finder, args.Registry, args.Image, args.Query)
+	result, err := ListTags(ctx, t.finder, t.allowedRegistries, args.Registry, args.Image, args.Query)
 	if err != nil {
 		return "", fmt.Errorf("list tags: %w", err)
 	}
@@ -112,10 +132,18 @@ func (t *listTagsTool) InvokableRun(ctx context.Context, argsJSON string, _ ...t
 	return string(out), nil
 }
 
-func ListImages(ctx context.Context, finder registryutil.Finder, query string) ([]registryutil.Image, error) {
+// ListImages searches registries concurrently. Per-registry failures are
+// logged and omitted so one unavailable registry does not hide the others.
+func ListImages(ctx context.Context, finder registryutil.Finder, registries []string, query string) ([]registryutil.Image, error) {
+	if query == "" {
+		return nil, fmt.Errorf("query is required")
+	}
+	if len(query) > 128 {
+		return nil, fmt.Errorf("query is too long")
+	}
+
 	const maxPerRegistry = 3
 
-	registries := []string{"docker.io", "ghcr.io"}
 	resultChan := make(chan registryutil.Image, maxPerRegistry*len(registries))
 
 	go func() {
@@ -149,8 +177,34 @@ func ListImages(ctx context.Context, finder registryutil.Finder, query string) (
 	return results, nil
 }
 
-func ListTags(ctx context.Context, finder registryutil.Finder, registry, image, query string) ([]registryutil.Tag, error) {
+func ListTags(
+	ctx context.Context,
+	finder registryutil.Finder,
+	allowedRegistries []string,
+	registry, image, query string,
+) ([]registryutil.Tag, error) {
 	const maxTags = 5
+
+	registry = strings.ToLower(strings.TrimSpace(registry))
+	normalized, err := registryutil.NormalizeAllowedRegistries(allowedRegistries)
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Contains(normalized, registry) {
+		return nil, fmt.Errorf("registry %q is not allowed", registry)
+	}
+	// The registry is fixed by the allowlist; the image must be a valid
+	// repository path under it per the distribution reference grammar.
+	if len(image) > 255 {
+		return nil, fmt.Errorf("image is too long")
+	}
+	named, err := reference.ParseNormalizedNamed(registry + "/" + image)
+	if err != nil || !reference.IsNameOnly(named) || reference.Domain(named) != registry {
+		return nil, fmt.Errorf("image must be a lowercase repository path")
+	}
+	if len(query) > 128 {
+		return nil, fmt.Errorf("query is too long")
+	}
 
 	if query == "" {
 		query = "latest"

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 
 	zbplan "github.com/zeabur/zbplan/pkg/zbplan"
 )
@@ -17,6 +18,8 @@ var (
 	dockerfilePath = flag.String("dockerfile", "", "optional: path to an existing Dockerfile to try first")
 	ociOut         = flag.String("oci-out", "", "optional: write OCI image tarball to this path")
 	variables      = MapFlag{}
+
+	allowedRegistries = flag.String("allowed-registries", "", "comma-separated allowed image registries (default: docker.io,ghcr.io,quay.io,gcr.io)")
 )
 
 func init() {
@@ -52,12 +55,18 @@ func main() {
 		userDockerfile = string(data)
 	}
 
+	var registries []string
+	if value := strings.TrimSpace(*allowedRegistries); value != "" {
+		registries = strings.Split(value, ",")
+	}
+
 	cfg := zbplan.Config{
-		Model:          chatModel,
-		BuildKitAddr:   *buildkitAddr,
-		ContextDir:     *contextDir,
-		Variables:      variables,
-		UserDockerfile: userDockerfile,
+		Model:             chatModel,
+		BuildKitAddr:      *buildkitAddr,
+		ContextDir:        *contextDir,
+		Variables:         variables,
+		AllowedRegistries: registries,
+		UserDockerfile:    userDockerfile,
 	}
 
 	if *ociOut != "" {

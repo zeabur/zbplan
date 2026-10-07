@@ -134,6 +134,8 @@ nix develop --command go run ./cmd/zbplan \
 
 可以用 `--variables KEY=value` 傳入環境變數。這些變數會在 Dockerfile 每個 stage 的 `FROM` 後被注入成 `ARG ZEABUR_ENV_*` 與對應的 `ENV`。
 
+可用逗號分隔的 `--allowed-registries` 取代預設的 image registry allowlist（`docker.io`、`ghcr.io`、`quay.io`、`gcr.io`）。Image 搜尋與 tag 查詢只會連到 allowlist 內的 registry。
+
 ## 開發
 
 這個專案透過 Nix 提供 Go 1.27.1，dev shell、套件建置與 Go Dockerfile template 都使用同一個版本。所有 Go commands 都應該在 dev shell 裡執行：
