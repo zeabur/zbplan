@@ -104,9 +104,13 @@ func Run(ctx context.Context, cfg Config) (result *Result, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("zbplan: invalid allowed registries: %w", err)
 	}
+	searchableRegistries := registryutil.SearchableRegistries(cfg.AllowedRegistries)
 	if cfg.SystemPrompt == "" {
 		cfg.SystemPrompt = DefaultSystemPrompt +
 			"\n\nAllowed image registries for this run: " + strings.Join(cfg.AllowedRegistries, ", ") + "."
+		if len(searchableRegistries) == 0 {
+			cfg.SystemPrompt += " Image search (list_images) is unavailable for these registries; use list_tags with known image names."
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, limits.RunTimeout)
@@ -181,9 +185,13 @@ func Run(ctx context.Context, cfg Config) (result *Result, err error) {
 		prompt = buildRetryPrompt(cfg.UserDockerfile, buildLogs)
 	}
 
-	tools := []tool.BaseTool{
-		plantools.NewGetDockerfileTemplateTool(),
-		plantools.NewListImagesTool(),
+	tools := []tool.BaseTool{plantools.NewGetDockerfileTemplateTool()}
+	// Image search only exists for some registries; offer it only when one of
+	// them is allowed, so search never contacts a registry the build denies.
+	if len(searchableRegistries) > 0 {
+		tools = append(tools, plantools.NewListImagesTool(searchableRegistries))
+	}
+	tools = append(tools,
 		plantools.NewListTagsTool(cfg.AllowedRegistries),
 		plantools.NewTreeTool(cfg.ContextDir),
 		plantools.NewGlobTool(cfg.ContextDir),
@@ -191,7 +199,7 @@ func Run(ctx context.Context, cfg Config) (result *Result, err error) {
 		plantools.NewReadTool(cfg.ContextDir),
 		plantools.NewListTool(cfg.ContextDir),
 		newReadToolOutputTool(outputStore),
-	}
+	)
 	tools = append(tools, cfg.ExtraTools...)
 
 	reactAgent, err := react.NewAgent(ctx, &react.AgentConfig{

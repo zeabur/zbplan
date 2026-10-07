@@ -91,7 +91,7 @@ func (f *finder) cachedTagNames(ctx context.Context, repo name.Repository) ([]st
 		return slices.Clone(tagNames), nil
 	}
 
-	ch := f.tagNamesGroup.DoChan(key, func() (any, error) {
+	tagNames, err := f.tagNamesGroup.Do(ctx, key, func(ctx context.Context) ([]string, error) {
 		if tagNames, ok := f.tagNamesCache.Get(key); ok {
 			return tagNames, nil
 		}
@@ -103,16 +103,10 @@ func (f *finder) cachedTagNames(ctx context.Context, repo name.Repository) ([]st
 		f.tagNamesCache.Add(key, tagNames)
 		return tagNames, nil
 	})
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case res := <-ch:
-		if res.Err != nil {
-			return nil, res.Err
-		}
-		return slices.Clone(res.Val.([]string)), nil
+	if err != nil {
+		return nil, err
 	}
+	return slices.Clone(tagNames), nil
 }
 
 func (f *finder) cachedCreatedAt(ctx context.Context, repo name.Repository, tagName, plOS, plArch string) (time.Time, error) {
@@ -121,7 +115,7 @@ func (f *finder) cachedCreatedAt(ctx context.Context, repo name.Repository, tagN
 		return createdAt, nil
 	}
 
-	ch := f.tagCreatedAtGroup.DoChan(key, func() (any, error) {
+	return f.tagCreatedAtGroup.Do(ctx, key, func(ctx context.Context) (time.Time, error) {
 		if createdAt, ok := f.tagCreatedAtCache.Get(key); ok {
 			return createdAt, nil
 		}
@@ -132,16 +126,6 @@ func (f *finder) cachedCreatedAt(ctx context.Context, repo name.Repository, tagN
 		f.tagCreatedAtCache.Add(key, createdAt)
 		return createdAt, nil
 	})
-
-	select {
-	case <-ctx.Done():
-		return time.Time{}, ctx.Err()
-	case res := <-ch:
-		if res.Err != nil {
-			return time.Time{}, res.Err
-		}
-		return res.Val.(time.Time), nil
-	}
 }
 
 func resolveCreatedAt(ctx context.Context, repo name.Repository, tagName, plOS, plArch string) (time.Time, error) {

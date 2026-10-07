@@ -2,8 +2,10 @@ package plantools
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -121,6 +123,69 @@ func TestReadToolReturnsLineNumbersAndContinuation(t *testing.T) {
 	}
 	if !strings.Contains(result, "[README.md lines 1-2; next_offset=2]") || !strings.Contains(result, "1:one\n2:two") {
 		t.Fatalf("unexpected bounded read result: %q", result)
+	}
+}
+
+func TestReadToolPagesThroughLongLinesWithoutLoss(t *testing.T) {
+	baseDir := t.TempDir()
+	long := strings.Repeat(`{"名前":"値",`, 15_000) // multi-byte runes, ~200 KiB on one line
+	content := "head\n" + long + "\ntail\n"
+	if err := os.WriteFile(filepath.Join(baseDir, "data.json"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	statusRE := regexp.MustCompile(`^\[data\.json lines \d+-\d+; (?:complete|next_offset=(\d+)|line \d+ continues; next_offset=(\d+) next_column=(\d+))\]\n`)
+	lineRE := regexp.MustCompile(`^(\d+):(…?)(.*?)(…?)$`)
+	read := NewReadTool(baseDir)
+	offset, column := 0, 0
+	rebuilt := map[int]string{}
+	for page := 0; ; page++ {
+		if page > 20 {
+			t.Fatal("pagination did not terminate")
+		}
+		result, err := read.InvokableRun(context.Background(), fmt.Sprintf(`{"path":"data.json","offset":%d,"column":%d}`, offset, column))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result) > maxReadBytes+256 {
+			t.Fatalf("page is %d bytes, above the read budget", len(result))
+		}
+		header := statusRE.FindStringSubmatch(result)
+		if header == nil {
+			t.Fatalf("unexpected header: %.200q", result)
+		}
+		for line := range strings.SplitSeq(strings.TrimPrefix(result, header[0]), "\n") {
+			m := lineRE.FindStringSubmatch(line)
+			if m == nil {
+				t.Fatalf("unexpected line: %.200q", line)
+			}
+			var n int
+			_, _ = fmt.Sscan(m[1], &n)
+			rebuilt[n] += m[3]
+		}
+		switch {
+		case header[3] != "":
+			_, _ = fmt.Sscan(header[2], &offset)
+			_, _ = fmt.Sscan(header[3], &column)
+		case header[1] != "":
+			_, _ = fmt.Sscan(header[1], &offset)
+			column = 0
+		default:
+			if rebuilt[1] != "head" || rebuilt[2] != long || rebuilt[3] != "tail" {
+				t.Fatalf("reassembled file differs: line 2 has %d of %d bytes", len(rebuilt[2]), len(long))
+			}
+			return
+		}
+	}
+}
+
+func TestReadToolRejectsColumnBeyondLine(t *testing.T) {
+	baseDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(baseDir, "a.txt"), []byte("abc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewReadTool(baseDir).InvokableRun(context.Background(), `{"path":"a.txt","column":4}`); err == nil {
+		t.Fatal("expected column rejection")
 	}
 }
 

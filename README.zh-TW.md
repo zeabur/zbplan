@@ -132,7 +132,14 @@ nix develop --command go run ./cmd/zbplan \
   --context-dir /path/to/project
 ```
 
-Dockerfile 的 `RUN` 指令使用 BuildKit 的預設 network。Image reference 預設允許 `docker.io`、`ghcr.io`、`quay.io` 與 `gcr.io`；需要其他 registry 時，可用逗號分隔的 `--allowed-registries` 取代預設清單。zbplan 不會把 runtime secrets 或環境變數傳入 AI 產生的 build。
+Build policy 由 BuildKit daemon 強制執行，不靠比對 Dockerfile 文字：
+
+- 每次 solve 都帶上 BuildKit [source policy](https://pkg.go.dev/github.com/moby/buildkit/sourcepolicy)：除了本機 build context 與 allowlist 內 registry 的 image，其餘來源一律拒絕。`FROM`、`COPY --from`、`RUN --mount from=`、base image 繼承的 `ONBUILD`、遠端 `ADD` URL 與 Git 來源都適用。Allowlist 預設為 `docker.io`、`ghcr.io`、`quay.io` 與 `gcr.io`，可用逗號分隔的 `--allowed-registries` 取代。Image 搜尋與 tag 查詢也使用同一份 allowlist。
+- 固定使用 daemon 內建的 Dockerfile frontend，`# syntax` 指令無法載入外部 frontend image。
+- 不授予任何 entitlement，BuildKit 會拒絕 `RUN --network=host` 與 `--security=insecure`。其他 `RUN` 指令使用 BuildKit 的預設 network。
+- Build context 只包含 agent 檔案工具能讀取的檔案：被 `.gitignore` 忽略的路徑、預設的相依套件／快取目錄，以及 `.env*`、`.npmrc`、私鑰等憑證檔案都不會傳給 BuildKit。
+
+zbplan 不會把 runtime secrets 或環境變數傳入 AI 產生的 build。
 
 Host 會強制套用安全的預設上限。可透過 `--max-build-attempts`、`--max-agent-steps`、`--max-model-requests`、`--max-tool-calls`、`--max-parallel-tool-calls`、`--max-retained-tool-output-bytes`、`--max-build-log-bytes`、`--run-timeout`、`--tool-timeout` 與 `--build-timeout` 進一步收緊。
 

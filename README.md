@@ -132,7 +132,14 @@ nix develop --command go run ./cmd/zbplan \
   --context-dir /path/to/project
 ```
 
-Dockerfile `RUN` instructions use BuildKit's default network. Image references default to the `docker.io`, `ghcr.io`, `quay.io`, and `gcr.io` allowlist; replace it with a comma-separated `--allowed-registries` value when another registry is required. The CLI and `pkg/zbplan` intentionally do not pass runtime secrets or environment variables into generated builds.
+Build policy is enforced by the BuildKit daemon, not by inspecting Dockerfile text:
+
+- Every solve carries a BuildKit [source policy](https://pkg.go.dev/github.com/moby/buildkit/sourcepolicy) that denies all sources except the local build context and images from the registry allowlist. It covers `FROM`, `COPY --from`, `RUN --mount from=`, inherited `ONBUILD` triggers, remote `ADD` URLs and Git sources alike. The allowlist defaults to `docker.io`, `ghcr.io`, `quay.io`, and `gcr.io`; replace it with a comma-separated `--allowed-registries` value. Image search and tag lookup use the same allowlist.
+- The daemon's bundled Dockerfile frontend is pinned, so `# syntax` directives cannot load an external frontend image.
+- No entitlements are granted, so BuildKit rejects `RUN --network=host` and `--security=insecure`. Other `RUN` instructions use BuildKit's default network.
+- The build context contains only files the agent's file tools may read: `.gitignore`d paths, default dependency/cache directories, and credential files such as `.env*`, `.npmrc`, and private keys are never sent to BuildKit.
+
+The CLI and `pkg/zbplan` intentionally do not pass runtime secrets or environment variables into generated builds.
 
 Host-enforced limits have secure defaults. Use `--max-build-attempts`, `--max-agent-steps`, `--max-model-requests`, `--max-tool-calls`, `--max-parallel-tool-calls`, `--max-retained-tool-output-bytes`, `--max-build-log-bytes`, `--run-timeout`, `--tool-timeout`, and `--build-timeout` to tighten them.
 

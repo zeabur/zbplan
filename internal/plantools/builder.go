@@ -10,6 +10,7 @@ import (
 
 	"github.com/moby/buildkit/client"
 	slogmulti "github.com/samber/slog-multi"
+	"github.com/zeabur/zbplan/internal/workspace"
 	"github.com/zeabur/zbplan/pkg/builder"
 )
 
@@ -77,6 +78,9 @@ func (b *BuilderClient) RunBuild(ctx context.Context, dockerfile string, ociOutp
 		Dockerfile:        dockerfile,
 		Context:           b.contextDir,
 		AllowedRegistries: b.allowedRegistries,
+		// The build sees exactly the files the agent's tools may read, so a
+		// generated Dockerfile cannot COPY ignored or sensitive files.
+		ExcludeContextPath: workspace.HiddenMatcher(b.contextDir),
 	}
 	if ociOutput == nil {
 		err = bld.Build(ctx, options)

@@ -18,10 +18,16 @@ import (
 )
 
 type BuildImageOptions struct {
-	Dockerfile        string
-	Context           string
+	Dockerfile string
+	Context    string
+	// AllowedRegistries lists the only image registries the build may pull
+	// from. Empty uses registryutil's default allowlist.
 	AllowedRegistries []string
-	Variables         map[string]string
+	// ExcludeContextPath, when set, hides matching build-context paths from
+	// BuildKit. Paths are slash-separated and relative to Context; excluding
+	// a directory excludes its contents.
+	ExcludeContextPath func(path string, isDir bool) bool
+	Variables          map[string]string
 }
 
 type Builder interface {
@@ -47,8 +53,12 @@ func NewBuildkitBuilder(buildkitClient *client.Client, logger *slog.Logger, solv
 }
 
 func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports []client.ExportEntry) error {
-	if err := validateBuildPolicy(options.Dockerfile, options.AllowedRegistries); err != nil {
-		return fmt.Errorf("validate build policy: %w", err)
+	if err := validateDockerfile(options.Dockerfile); err != nil {
+		return fmt.Errorf("validate dockerfile: %w", err)
+	}
+	policy, err := sourcePolicy(options.AllowedRegistries)
+	if err != nil {
+		return fmt.Errorf("build source policy: %w", err)
 	}
 	b.logger.InfoContext(ctx, "preparing build environment")
 	prepared, err := buildenv.Prepare(ctx, options.Dockerfile, options.Variables)
@@ -73,6 +83,7 @@ func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports 
 		b.logger.ErrorContext(ctx, "Failed to create context filesystem", slog.Any("error", err))
 		return fmt.Errorf("create context filesystem: %w", err)
 	}
+	contextFS = newFilteredFS(contextFS, options.ExcludeContextPath)
 
 	b.logger.InfoContext(ctx, "🐳 Writing Dockerfile...")
 	if err = os.WriteFile(path.Join(tempDir, "Dockerfile"), []byte(prepared.Dockerfile), 0o644); err != nil {
@@ -87,6 +98,9 @@ func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports 
 	}
 
 	frontendAttrs := prepared.FrontendAttrs()
+	frontendAttrs["cmdline"] = bundledDockerfileFrontend
+	// AllowedEntitlements stays empty: BuildKit then rejects RUN
+	// --network=host and --security=insecure itself.
 	solveOpt := client.SolveOpt{
 		LocalMounts: map[string]fsutil.FS{
 			"context":    contextFS,
@@ -96,6 +110,7 @@ func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports 
 		FrontendAttrs: frontendAttrs,
 		Session:       prepared.Session,
 		Exports:       exports,
+		SourcePolicy:  policy,
 	}
 
 	b.logger.InfoContext(ctx, "🚢 Building image...")
@@ -112,12 +127,19 @@ func (b *builder) solve(ctx context.Context, options BuildImageOptions, exports 
 	})
 
 	egrp.Go(func() error {
+		// BuildKit's client blocks on every status send and closes ch only
+		// when Solve returns, so this consumer must drain ch to its close.
+		// Stopping on cancellation would deadlock a timed-out Solve.
+		defer func() {
+			for range ch {
+			}
+		}()
 		output := NewSlogWriter(b.logger, "buildkit progress")
 		d, err := progressui.NewDisplay(output, progressui.AutoMode)
 		if err != nil {
 			return err
 		}
-		_, err = d.UpdateFrom(ctx, ch)
+		_, err = d.UpdateFrom(context.WithoutCancel(ctx), ch)
 		return err
 	})
 

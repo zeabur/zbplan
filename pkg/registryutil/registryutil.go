@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/hashicorp/golang-lru/v2/expirable"
-	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -22,6 +23,11 @@ const (
 	defaultTagCacheMax = 1024
 	defaultHTTPTimeout = 30 * time.Second
 )
+
+// registryHostRE accepts a lowercase DNS host with an optional port. Allowlist
+// entries become BuildKit source-policy selectors, so wildcard and path
+// characters must never pass.
+var registryHostRE = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?::[0-9]{1,5})?$`)
 
 // NormalizeAllowedRegistries returns a lowercase, trimmed, de-duplicated
 // registry allowlist. An empty list uses the supported public defaults.
@@ -36,6 +42,9 @@ func NormalizeAllowedRegistries(configured []string) ([]string, error) {
 		registry = strings.ToLower(strings.TrimSpace(registry))
 		if registry == "" {
 			continue
+		}
+		if !registryHostRE.MatchString(registry) {
+			return nil, fmt.Errorf("invalid registry %q", registry)
 		}
 		parsed, err := name.NewRegistry(registry, name.StrictValidation)
 		// go-containerregistry maps docker.io to index.docker.io internally.
@@ -53,6 +62,18 @@ func NormalizeAllowedRegistries(configured []string) ([]string, error) {
 		return nil, fmt.Errorf("registry allowlist is empty")
 	}
 	return registries, nil
+}
+
+// SearchableRegistries returns the registries in allowed whose image search
+// API Images supports, in a stable order. allowed must already be normalized.
+func SearchableRegistries(allowed []string) []string {
+	var searchable []string
+	for _, registry := range []string{RegistryDockerHub, RegistryGHCR} {
+		if slices.Contains(allowed, registry) {
+			searchable = append(searchable, registry)
+		}
+	}
+	return searchable
 }
 
 type Tag struct {
@@ -77,8 +98,8 @@ type finder struct {
 
 	tagNamesCache     *expirable.LRU[string, []string]
 	tagCreatedAtCache *expirable.LRU[string, time.Time]
-	tagNamesGroup     singleflight.Group
-	tagCreatedAtGroup singleflight.Group
+	tagNamesGroup     sharedCalls[[]string]
+	tagCreatedAtGroup sharedCalls[time.Time]
 
 	listRemoteTags      func(context.Context, name.Repository) ([]string, error)
 	resolveTagCreatedAt func(context.Context, name.Repository, string, string, string) (time.Time, error)

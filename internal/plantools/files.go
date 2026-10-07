@@ -17,22 +17,8 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	"github.com/moby/patternmatcher"
+	"github.com/zeabur/zbplan/internal/workspace"
 )
-
-var defaultIgnoredDirs = []string{
-	".git",
-	".venv",
-	"venv",
-	"node_modules",
-	"__pycache__",
-	".mypy_cache",
-	".pytest_cache",
-	".tox",
-	".next",
-	".nuxt",
-	".cache",
-}
 
 var errPathEscapesBase = errors.New("path escapes base directory")
 
@@ -47,70 +33,8 @@ const (
 	maxGrepResults       = 100
 	maxGrepFiles         = 10_000
 	maxGrepBytes         = 16 << 20
-	maxIgnoreFileBytes   = 256 * 1024
-	maxIgnorePatterns    = 2_000
 	maxTreeDepth         = 5
 )
-
-func isSensitiveToolPath(path string) bool {
-	lowerPath := filepath.ToSlash(strings.ToLower(path))
-	base := filepath.Base(lowerPath)
-	switch base {
-	case ".env", ".envrc", ".dev.vars", ".npmrc", ".pypirc", ".netrc", "id_rsa", "id_ed25519", ".dockerconfigjson":
-		return true
-	}
-	if strings.HasPrefix(base, ".env.") ||
-		lowerPath == ".docker/config.json" ||
-		strings.HasSuffix(lowerPath, "/.docker/config.json") {
-		return true
-	}
-	switch filepath.Ext(base) {
-	case ".pem", ".key", ".p12", ".pfx":
-		return true
-	default:
-		return false
-	}
-}
-
-func buildShouldIgnore(baseDir string) func(string, bool) bool {
-	patterns := make([]string, len(defaultIgnoredDirs))
-	copy(patterns, defaultIgnoredDirs)
-	if ignoreFile, err := os.Open(filepath.Join(baseDir, ".gitignore")); err == nil {
-		data, readErr := io.ReadAll(io.LimitReader(ignoreFile, maxIgnoreFileBytes+1))
-		_ = ignoreFile.Close()
-		if readErr == nil && len(data) <= maxIgnoreFileBytes {
-			for line := range strings.SplitSeq(string(data), "\n") {
-				line = strings.TrimSpace(line)
-				if line != "" && !strings.HasPrefix(line, "#") {
-					patterns = append(patterns, line)
-					if len(patterns) >= maxIgnorePatterns {
-						break
-					}
-				}
-			}
-		}
-	}
-
-	pm, err := patternmatcher.New(patterns)
-	if err != nil {
-		ignored := make(map[string]bool, len(defaultIgnoredDirs))
-		for _, d := range defaultIgnoredDirs {
-			ignored[d] = true
-		}
-		return func(filePath string, isDir bool) bool {
-			base := filepath.Base(filePath)
-			return base != "." && ignored[base]
-		}
-	}
-
-	return func(filePath string, isDir bool) bool {
-		if filePath == "." {
-			return false
-		}
-		matched, _ := pm.MatchesOrParentMatches(filePath)
-		return matched
-	}
-}
 
 func relFromBase(baseDir, absPath string) string {
 	rel, err := filepath.Rel(baseDir, absPath)
@@ -180,9 +104,9 @@ func secureExistingToolPath(baseDir, path string) (string, string, error) {
 }
 
 func unavailableExistingToolPath(baseDir, requestedRel, resolvedAbs string, isDir bool) (bool, error) {
-	shouldIgnore := buildShouldIgnore(baseDir)
+	shouldIgnore := workspace.IgnoreMatcher(baseDir)
 	requestedRel = filepath.ToSlash(requestedRel)
-	if isSensitiveToolPath(requestedRel) || shouldIgnore(requestedRel, isDir) {
+	if workspace.IsSensitive(requestedRel) || shouldIgnore(requestedRel, isDir) {
 		return true, nil
 	}
 
@@ -199,7 +123,7 @@ func unavailableExistingToolPath(baseDir, requestedRel, resolvedAbs string, isDi
 		return false, errPathEscapesBase
 	}
 	resolvedRel = filepath.ToSlash(resolvedRel)
-	return isSensitiveToolPath(resolvedRel) || shouldIgnore(resolvedRel, isDir), nil
+	return workspace.IsSensitive(resolvedRel) || shouldIgnore(resolvedRel, isDir), nil
 }
 
 func globWalkRoot(absBase, pattern string) string {
@@ -316,7 +240,7 @@ func (t *globTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 		return "", fmt.Errorf("resolve base directory: %w", err)
 	}
 	root := globWalkRoot(absBase, args.Pattern)
-	shouldIgnore := buildShouldIgnore(absBase)
+	shouldIgnore := workspace.IgnoreMatcher(absBase)
 	results := make([]string, 0, args.Limit)
 	visited := 0
 	truncated := false
@@ -334,7 +258,7 @@ func (t *globTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 			return filepath.SkipAll
 		}
 		rel := relFromBase(absBase, absPath)
-		if shouldIgnore(rel, info.IsDir()) || isSensitiveToolPath(rel) {
+		if shouldIgnore(rel, info.IsDir()) || workspace.IsSensitive(rel) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
@@ -435,7 +359,7 @@ func (t *grepTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 	if err != nil {
 		return "", fmt.Errorf("resolve base directory: %w", err)
 	}
-	shouldIgnore := buildShouldIgnore(absBase)
+	shouldIgnore := workspace.IgnoreMatcher(absBase)
 	results := make([]string, 0, args.Limit)
 	filesScanned := 0
 	bytesScanned := int64(0)
@@ -455,7 +379,7 @@ func (t *grepTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 			return filepath.SkipAll
 		}
 		rel := relFromBase(absBase, absPath)
-		if shouldIgnore(rel, info.IsDir()) || isSensitiveToolPath(rel) {
+		if shouldIgnore(rel, info.IsDir()) || workspace.IsSensitive(rel) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
@@ -551,6 +475,7 @@ func (t *readTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"path":   {Type: schema.String, Desc: "The path of the file to read.", Required: true},
 			"offset": {Type: schema.Integer, Desc: "Number of lines to skip from the start. Defaults to 0."},
+			"column": {Type: schema.Integer, Desc: "Byte position within the first requested line to resume from. Pass the next_column reported for a split long line; defaults to 0."},
 			"limit":  {Type: schema.Integer, Desc: "Maximum number of lines to return. Defaults to first 200 lines."},
 		}),
 	}, nil
@@ -560,6 +485,7 @@ func (t *readTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 	var args struct {
 		Path   string `json:"path"`
 		Offset int    `json:"offset"`
+		Column int    `json:"column"`
 		Limit  int    `json:"limit"`
 	}
 	if argsJSON == "" {
@@ -573,6 +499,9 @@ func (t *readTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 	}
 	if args.Offset < 0 {
 		return "", fmt.Errorf("offset must not be negative")
+	}
+	if args.Column < 0 {
+		return "", fmt.Errorf("column must not be negative")
 	}
 	if args.Limit == 0 {
 		args.Limit = maxReadLines
@@ -619,6 +548,10 @@ func (t *readTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 	lineNum := 0
 	contentBytes := 0
 	hasMore := false
+	// A line longer than the remaining byte budget is split. The cursor then
+	// stays on that line and advances by column, so pagination never skips
+	// the undisclosed suffix of a long line such as minified JSON.
+	splitColumn := -1
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
 			return "", err
@@ -631,12 +564,26 @@ func (t *readTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 			hasMore = true
 			break
 		}
-		line := fmt.Sprintf("%d:%s", lineNum, scanner.Text())
+		text := scanner.Text()
+		prefix := fmt.Sprintf("%d:", lineNum)
+		column := 0
+		if lineNum == args.Offset+1 && args.Column > 0 {
+			if args.Column > len(text) {
+				return "", fmt.Errorf("column %d exceeds the %d-byte length of line %d", args.Column, len(text), lineNum)
+			}
+			column = args.Column
+			for column < len(text) && !utf8.RuneStart(text[column]) {
+				column++
+			}
+			text = text[column:]
+			prefix += "…"
+		}
+		line := prefix + text
 		if contentBytes+len(line)+1 > maxReadBytes {
-			remaining := maxReadBytes - contentBytes - len(fmt.Sprintf("%d:", lineNum)) - 1
-			if remaining > 0 {
-				line = fmt.Sprintf("%d:%s…", lineNum, safeTextPrefix(scanner.Text(), remaining))
-				lines = append(lines, line)
+			remaining := maxReadBytes - contentBytes - len(prefix) - len("…") - 1
+			if part := safeTextPrefix(text, max(remaining, 0)); part != "" {
+				lines = append(lines, prefix+part+"…")
+				splitColumn = column + len(part)
 			}
 			hasMore = true
 			break
@@ -656,7 +603,10 @@ func (t *readTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 
 	endLine := args.Offset + len(lines)
 	status := "complete"
-	if hasMore {
+	switch {
+	case splitColumn >= 0:
+		status = fmt.Sprintf("line %d continues; next_offset=%d next_column=%d", endLine, endLine-1, splitColumn)
+	case hasMore:
 		status = fmt.Sprintf("next_offset=%d", endLine)
 	}
 	return fmt.Sprintf("[%s lines %d-%d; %s]\n%s", relPath, args.Offset+1, endLine, status, strings.Join(lines, "\n")), nil
@@ -730,14 +680,14 @@ func listDirectory(ctx context.Context, baseDir, relPath, absPath string, limit 
 		entries = entries[:maxDirectoryScan]
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	shouldIgnore := buildShouldIgnore(baseDir)
+	shouldIgnore := workspace.IgnoreMatcher(baseDir)
 	names := make([]string, 0, min(limit, len(entries)))
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
 		entryRel := filepath.ToSlash(filepath.Join(relPath, entry.Name()))
-		if shouldIgnore(entryRel, entry.IsDir()) || isSensitiveToolPath(entryRel) {
+		if shouldIgnore(entryRel, entry.IsDir()) || workspace.IsSensitive(entryRel) {
 			continue
 		}
 		name := entry.Name()
@@ -817,7 +767,7 @@ func (t *treeTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 	if err != nil {
 		return "", fmt.Errorf("resolve base directory: %w", err)
 	}
-	shouldIgnore := buildShouldIgnore(absBase)
+	shouldIgnore := workspace.IgnoreMatcher(absBase)
 
 	const maxEntries = 500
 	lines := make([]string, 0, maxEntries)
@@ -831,7 +781,7 @@ func (t *treeTool) InvokableRun(ctx context.Context, argsJSON string, _ ...tool.
 			return err
 		}
 		relFromBasePath := relFromBase(absBase, absPath)
-		if shouldIgnore(relFromBasePath, info.IsDir()) || isSensitiveToolPath(relFromBasePath) {
+		if shouldIgnore(relFromBasePath, info.IsDir()) || workspace.IsSensitive(relFromBasePath) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
